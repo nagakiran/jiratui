@@ -474,15 +474,40 @@ def test_build_file_attachment_widget_for_unsupported_file_type():
     assert widget is None
 
 
+@patch('jiratui.widgets.attachments.attachments._image_widget_class')
 @patch('jiratui.widgets.attachments.attachments._image_support_is_enabled')
 def test_build_file_attachment_widget_for_supported_image_file_type(
     image_support_is_enabled_mock: Mock,
+    image_widget_class_mock: Mock,
 ):
     from textual_image.widget import Image
 
     image_support_is_enabled_mock.return_value = True
+    image_widget_class_mock.return_value = Image
     widget = FileAttachmentWidget.build_widget(
         'image/gif',
         b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x01\x03\x00\x00\x00%\xdbV\xca\x00\x00\x00\x03PLTE\x00\x00\x00\xa7z=\xda\x00\x00\x00\x01tRNS\x00@\xe6\xd8f\x00\x00\x00\nIDAT\x08\xd7c`\x00\x00\x00\x02\x00\x01\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82',
     )
     assert isinstance(widget, Image)
+
+
+@pytest.mark.parametrize(
+    'backend',
+    ['tgp', 'sixel', 'halfcell', 'unicode', 'auto'],
+)
+@patch('jiratui.widgets.attachments.attachments._image_support_is_enabled')
+@patch('jiratui.widgets.attachments.attachments.CONFIGURATION')
+def test_build_file_attachment_widget_uses_configured_image_rendering_backend(
+    configuration_mock: Mock,
+    image_support_is_enabled_mock: Mock,
+    backend: str,
+):
+    from jiratui.widgets.attachments.attachments import _IMAGE_WIDGET_CLASSES
+
+    configuration_mock.get.return_value = Mock(image_rendering_backend=backend)
+    image_support_is_enabled_mock.return_value = True
+    widget = FileAttachmentWidget.build_widget(
+        'image/gif',
+        b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x01\x03\x00\x00\x00%\xdbV\xca\x00\x00\x00\x03PLTE\x00\x00\x00\xa7z=\xda\x00\x00\x00\x01tRNS\x00@\xe6\xd8f\x00\x00\x00\nIDAT\x08\xd7c`\x00\x00\x00\x02\x00\x01\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82',
+    )
+    assert type(widget) is _IMAGE_WIDGET_CLASSES[backend]

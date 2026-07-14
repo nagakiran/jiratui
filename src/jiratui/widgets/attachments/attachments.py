@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from io import BytesIO
 import json
 import os
-from typing import cast
+from typing import Any, cast
 
 from textual import on
 from textual.app import ComposeResult
@@ -13,7 +13,7 @@ from textual.reactive import Reactive, reactive
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import DataTable, LoadingIndicator, Markdown, Static, TextArea
-from textual_image.widget import Image
+from textual_image.widget import HalfcellImage, Image, SixelImage, TGPImage, UnicodeImage
 
 from jiratui.api_controller.controller import APIControllerResponse
 from jiratui.config import CONFIGURATION
@@ -461,7 +461,7 @@ class FileAttachmentWidget:
             from PIL import UnidentifiedImageError
 
             try:
-                return Image(BytesIO(content))
+                return _image_widget_class()(BytesIO(content))
             except UnidentifiedImageError:
                 return None
         return None
@@ -469,3 +469,16 @@ class FileAttachmentWidget:
 
 def _image_support_is_enabled() -> bool:
     return CONFIGURATION.get().enable_images_support
+
+
+_IMAGE_WIDGET_CLASSES: dict[str, Any] = {
+    'auto': Image,
+    'tgp': TGPImage,
+    'sixel': SixelImage,
+    'halfcell': HalfcellImage,
+    'unicode': UnicodeImage,
+}
+
+
+def _image_widget_class() -> Any:
+    return _IMAGE_WIDGET_CLASSES.get(CONFIGURATION.get().image_rendering_backend, Image)

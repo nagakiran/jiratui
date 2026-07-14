@@ -1,6 +1,7 @@
 from contextvars import ContextVar
 import os
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import (
@@ -239,6 +240,15 @@ class ApplicationConfiguration(BaseSettings):
     enable_images_support: bool = True
     """When this is set to `True` JiraTUI will attempt to display images attached to a work item in the Attachments
     tab."""
+    image_rendering_backend: Literal['auto', 'tgp', 'sixel', 'halfcell', 'unicode'] = 'auto'
+    """Controls which `textual-image` backend is used to render image attachments in the terminal.
+
+    `auto` (default) lets `textual-image` probe the terminal and pick the best protocol automatically: Sixel, then
+    Kitty's Terminal Graphics Protocol (TGP), then half-cell block characters, then plain unicode blocks as a last
+    resort. If you run JiraTUI inside `tmux`, Sixel rendering may show a placeholder box instead of the actual
+    image, even with `allow-passthrough` enabled in tmux - `textual-image`'s Sixel backend doesn't wrap its output
+    in tmux's passthrough envelope the way its TGP backend does. If that happens, set this to `tgp` (works for
+    terminals that support Kitty's Terminal Graphics Protocol, e.g. Kitty itself)."""
     styling: StylingConfiguration = Field(default_factory=StylingConfiguration)
     """Configuration for styling components like work item status, priorities and type colors."""
     enable_updating_rich_text: bool = True
