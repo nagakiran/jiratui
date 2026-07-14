@@ -1,5 +1,8 @@
+from typing import cast
+
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
 from textual.events import Key
 from textual.screen import ModalScreen
@@ -12,6 +15,11 @@ class PreDefinedJQLExpressionsWidget(Select):
     """A custom [Select](#textual.widgets.Select) widget for selecting pre-defined JQL expressions loaded for the
     configuration file."""
 
+    BINDINGS = [
+        Binding('down,space,up', 'show_overlay', 'Show menu', show=False),
+        Binding('enter', 'confirm_selection', 'Apply expression', show=False),
+    ]
+
     def __init__(self, options: list):
         super().__init__(
             options=options,
@@ -22,6 +30,12 @@ class PreDefinedJQLExpressionsWidget(Select):
             classes='dropdown',
         )
         self.border_title = 'Expression'
+
+    def action_confirm_selection(self) -> None:
+        if self.value is not Select.NULL:
+            cast('JQLEditorScreen', self.screen).dismiss_with_current_text()
+        else:
+            self.action_show_overlay()
 
 
 class JQLEditorScreen(ModalScreen[str]):
@@ -67,7 +81,10 @@ class JQLEditorScreen(ModalScreen[str]):
 
     def on_key(self, event: Key):
         if event.key == 'escape':
-            self.dismiss(self.query_one(TextArea).text.strip())
+            self.dismiss_with_current_text()
+
+    def dismiss_with_current_text(self) -> None:
+        self.dismiss(self.query_one(TextArea).text.strip())
 
     @on(PreDefinedJQLExpressionsWidget.Changed)
     def select_pre_defined_expression(self, event: Select.Changed) -> None:

@@ -1,7 +1,7 @@
 from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
-from textual.widgets import TextArea
+from textual.widgets import Select, TextArea
 
 from jiratui.widgets.screen import MainScreen
 from jiratui.widgets.screens.jql import JQLEditorScreen, PreDefinedJQLExpressionsWidget
@@ -130,3 +130,34 @@ async def test_open_jql_editor_screen_with_predefined_expressions_select_express
         assert widget.selection == '1'
         textarea = screen.query_one(TextArea)
         assert textarea.text == 'expression 1'
+
+
+@patch.object(
+    JQLEditorScreen,
+    '_pre_defined_jql_expressions',
+    PropertyMock(
+        return_value={
+            '1': {'label': 'Expression A', 'expression': 'expression 1'},
+            '2': {'label': 'Expression B', 'expression': 'expression 2'},
+        }
+    ),
+)
+@pytest.mark.asyncio
+async def test_apply_selected_expression_with_enter_closes_editor(app):
+    # GIVEN
+    async with app.run_test() as pilot:
+        screen = JQLEditorScreen()
+        screen.dismiss = Mock()
+        await app.push_screen(screen)
+        await pilot.pause()
+        widget = screen.query_one(PreDefinedJQLExpressionsWidget)
+        # WHEN selecting a predefined expression
+        await pilot.press('enter')
+        await pilot.press('down')
+        await pilot.press('enter')
+        assert widget.selection == '1'
+        assert widget.value is not Select.NULL
+        # THEN pressing enter again applies/closes the editor instead of reopening the dropdown
+        await pilot.press('enter')
+        assert widget.expanded is False
+        assert screen.dismiss.call_args[0][0] == 'expression 1'
