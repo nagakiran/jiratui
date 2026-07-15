@@ -17,20 +17,40 @@ from textual.widget import Widget
 from textual.widgets import Select
 
 from jiratui.config import CONFIGURATION
-from jiratui.widgets.commons import FieldMode
-from jiratui.widgets.commons.adf import ReadOnlyADFMarkdownTextAreaWidget
+from jiratui.widgets.commons import CustomFieldType, FieldMode
+from jiratui.widgets.commons.adf import (
+    ADFMarkdownTextAreaWidget,
+    ReadOnlyADFMarkdownTextAreaWidget,
+)
 from jiratui.widgets.commons.widgets import (
     DateInputWidget,
     DateTimeInputWidget,
+    EpicLinkWidget,
     LabelsWidget,
     MultiSelectWidget,
+    MultiUserPickerWidget,
     NumericInputWidget,
+    PlainTextTextAreaWidget,
     ReadOnlyPlainTextTextAreaWidget,
     SelectionWidget,
     SingleUserPickerWidget,
+    SprintWidget,
     TextInputWidget,
     URLWidget,
 )
+
+# these field types are not supported because generating their widgets requires special treatment, e.g. fetching the
+# list of options via autocomplete. Otherwise, these fields would be rendered with a default text-based widget, which
+# causes errors when the values are submitted; as their values are not simply strings.
+FIELDS_IDS_NOT_SUPPORTED = [
+    'attachment',
+    'issuelinks',
+]
+
+CUSTOM_FIELD_TYPES_NOT_SUPPORTED = [
+    'com.atlassian.jira.plugin.system.customfieldtypes:atlassian-team',
+    'com.pyxis.greenhopper.jira:gh-lexo-rank',  # this requires special syntax
+]
 
 
 class FieldMetadata:
@@ -746,3 +766,272 @@ def build_read_only_rich_text_widget(
 
 def _adf_support_enabled() -> bool:
     return CONFIGURATION.get().cloud and CONFIGURATION.get().jira_api_version == 3
+
+
+def build_widget_for_field(
+    item: dict,
+    adf_support_enabled: bool = True,
+    mode: FieldMode = FieldMode.CREATE,
+) -> Widget | None:
+    """Builds the widget that allows a user to enter the value of a single Jira field.
+
+    The widget is chosen based on the field's `schema.custom` and `schema.type`. The metadata of the field is expected
+    to use the shape that Jira returns for the fields of the create-metadata resource, i.e. the ID of the field is
+    stored in the `fieldId` key.
+
+    Args:
+        item: the raw metadata of the field.
+        adf_support_enabled: indicates if ADF support is enabled. This means the following:
+        `config.cloud and config.jira_api_version == 3`.
+        mode: the mode of the widget.
+
+    Returns:
+        A `textual.widget.Widget` instance, or `None` if the field is not supported.
+    """
+
+    field_id: str = item.get('fieldId') or ''
+    required: bool = item.get('required', False)
+    widget: Widget | None
+
+    if field_id in FIELDS_IDS_NOT_SUPPORTED:
+        return None
+
+    if field_id == 'duedate':
+        widget = DateInputWidget(
+            mode=mode,
+            field_id=field_id,
+            jira_field_key=field_id,
+            title='Due Date',
+            required=required,
+        )
+    else:
+        schema: dict = item.get('schema', {})
+        schema_type = schema.get('type', '')
+        custom_type: str | None = schema.get('custom')
+        if custom_type in CUSTOM_FIELD_TYPES_NOT_SUPPORTED:
+            return None
+        if custom_type == CustomFieldType.USER_PICKER.value or schema_type == 'user':
+            widget = SingleUserPickerWidget(
+                mode=mode,
+                field_id=field_id,
+                jira_field_key=item.get('key') or field_id,
+                required=required,
+                title=item.get('name'),
+            )
+        elif custom_type == CustomFieldType.MULTI_USER_PICKER.value:
+            widget = MultiUserPickerWidget(
+                mode=mode,
+                field_id=field_id,
+                jira_field_key=item.get('key') or field_id,
+                title=item.get('name'),
+                required=required,
+            )
+        elif custom_type == CustomFieldType.EPIC_LINK.value:
+            widget = EpicLinkWidget(
+                mode=mode,
+                field_id=field_id,
+                jira_field_key=item.get('key') or field_id,
+                title=item.get('name'),
+                required=required,
+            )
+            widget.tooltip = f'{item.get("name")} (Tip: to ignore use id: {field_id})'
+        elif custom_type == CustomFieldType.SPRINT.value:
+            widget = SprintWidget(
+                mode=mode,
+                field_id=field_id,
+                jira_field_key=item.get('key') or field_id,
+                title=item.get('name'),
+                required=required,
+            )
+            widget.tooltip = f'{item.get("name")} (Tip: to ignore use id: {field_id})'
+        elif custom_type == CustomFieldType.FLOAT.value or (
+            schema_type and schema_type.lower() == 'number'
+        ):
+            widget = NumericInputWidget(
+                mode=mode,
+                field_id=field_id,
+                jira_field_key=item.get('key') or field_id,
+                required=required,
+                title=item.get('name'),
+            )
+            widget.border_title = item.get('name')
+        elif custom_type == CustomFieldType.LABELS.value or (
+            schema_type == 'array' and schema.get('system') == 'labels'
+        ):
+            widget = LabelsWidget(
+                mode=mode,
+                field_id=field_id,
+                jira_field_key=item.get('key') or field_id,
+                title=item.get('name'),
+                required=required,
+            )
+        elif custom_type == CustomFieldType.DATE_PICKER.value or (
+            schema_type and schema_type.lower() == 'date'
+        ):
+            widget = DateInputWidget(
+                mode=mode,
+                field_id=field_id,
+                jira_field_key=item.get('key') or field_id,
+                required=required,
+                title=item.get('name'),
+            )
+            widget.border_title = item.get('name')
+        elif custom_type == CustomFieldType.DATETIME.value:
+            widget = DateTimeInputWidget(
+                mode=mode,
+                field_id=field_id,
+                jira_field_key=item.get('key') or field_id,
+                required=required,
+                title=item.get('name'),
+            )
+            widget.border_title = item.get('name')
+        elif custom_type == CustomFieldType.URL.value:
+            widget = URLWidget(
+                mode=mode,
+                field_id=field_id,
+                jira_field_key=item.get('key') or field_id,
+                required=required,
+                title=item.get('name'),
+            )
+            widget.border_title = item.get('name')
+        elif 'allowedValues' in item:
+            # the field supports pre-defined values
+            if not (allowed_values := item.get('allowedValues')):
+                # if the field does not have any pre-defined values then the field can not be used because we don't
+                # know the possible allowed values to choose from; Jira admins need to pre-define the values first
+                return None
+            options = AllowedValuesParser.parse_options(allowed_values)
+            # check if this is an array field (multi-select)
+            if schema_type == 'array':
+                multi_initial_value = []
+                has_default = item.get('hasDefaultValue', False)
+                if has_default and (default_value := item.get('defaultValue')):
+                    if isinstance(default_value, list):
+                        multi_initial_value = [
+                            str(v.get('id')) for v in default_value if isinstance(v, dict)
+                        ]
+                    elif isinstance(default_value, dict):
+                        multi_initial_value = [str(default_value.get('id'))]
+
+                widget = MultiSelectWidget(
+                    mode=mode,
+                    field_id=field_id,
+                    jira_field_key=item.get('key') or field_id,
+                    options=options,
+                    title=item.get('name'),
+                    required=bool(required),
+                    initial_value=multi_initial_value,
+                    field_supports_update=True,
+                )
+            else:
+                allow_blank = True
+                initial_value: Any = Select.NULL
+                has_default = item.get('hasDefaultValue', False)
+                if has_default and (default_value := item.get('defaultValue')):
+                    allow_blank = False
+                    initial_value = default_value.get('id')
+
+                widget = SelectionWidget(
+                    mode=mode,
+                    field_id=field_id,
+                    jira_field_key=item.get('key') or field_id,
+                    options=options,
+                    title=item.get('name'),
+                    required=bool(required),
+                    initial_value=initial_value,
+                    allow_blank=allow_blank or (initial_value == Select.NULL or not initial_value),
+                    prompt=f'Select {item.get("name")}',
+                )
+        elif custom_type == CustomFieldType.TEXTAREA.value:
+            if adf_support_enabled:
+                widget = ADFMarkdownTextAreaWidget(
+                    mode=mode,
+                    field_id=field_id,
+                    jira_field_key=item.get('key') or field_id,
+                    title=item.get('name'),
+                    required=required,
+                )
+            else:
+                widget = PlainTextTextAreaWidget(
+                    mode=mode,
+                    field_id=field_id,
+                    jira_field_key=item.get('key') or field_id,
+                    title=item.get('name'),
+                    required=required,
+                )
+        else:
+            # the default widget for any other field
+            widget = TextInputWidget(
+                mode=mode,
+                field_id=field_id,
+                jira_field_key=item.get('key') or field_id,
+                title=item.get('name'),
+                required=required,
+                placeholder=f'Enter value for {item.get("name")}...',
+            )
+            widget.border_title = item.get('name')
+            widget.tooltip = f'{item.get("name")} (Tip: to ignore use id: {field_id})'
+
+    if widget is not None and field_id.startswith('customfield'):
+        # add a tooltip for custom fields to help with the ignore configuration
+        field_name = item.get('name', field_id)
+        widget.tooltip = f'{field_name} (Tip: to ignore use id: {field_id})'
+    return widget
+
+
+def format_field_value_for_api(field_id: str, value: Any, field_metadata: dict) -> Any:
+    """Formats a field's value based on the field's metadata.
+
+    This consolidated logic handles different field types like user pickers, floats, labels, and select fields.
+
+    Args:
+        field_id: the Jira field ID.
+        value: the raw value from the form widget.
+        field_metadata: the field's metadata from Jira.
+
+    Returns:
+        The formatted value ready for API submission, or None to skip the field.
+    """
+
+    if not value:
+        return None
+
+    schema = field_metadata.get('schema', {})
+    custom_type = schema.get('custom')
+
+    if custom_type == CustomFieldType.USER_PICKER.value or schema.get('type') == 'user':
+        return {'accountId': value}
+
+    elif custom_type == CustomFieldType.FLOAT.value or schema.get('type') == 'number':
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            # invalid float - skip this field
+            return None
+
+    # labels field (array of strings)
+    elif field_id == 'labels' or (
+        schema.get('type') == 'array' and schema.get('items') == 'strings'
+    ):
+        if isinstance(value, str):
+            # split by comma and strip whitespace from each label
+            return [label.strip() for label in value.split(',') if label.strip()]
+        elif isinstance(value, list):
+            return value
+        else:
+            return []
+
+    # select-type fields (fields with allowedValues in the metadata)
+    elif field_metadata.get('allowedValues'):
+        # array type fields (like multi-select) need array of objects
+        if schema.get('type') == 'array':
+            if isinstance(value, list):
+                return [{'id': v} for v in value]
+            else:
+                return [{'id': value}]
+        else:
+            # single-select: convert to object with 'id' key
+            return {'id': value}
+
+    # default: pass value as-is
+    return value

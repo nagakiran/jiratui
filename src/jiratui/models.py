@@ -772,6 +772,10 @@ class IssueTransition(BaseModel):
     id: str
     name: str
     to_state: IssueTransitionState | None = None
+    has_screen: bool = False
+    """Indicates whether Jira displays a transition screen when this transition is performed."""
+    fields: dict = dataclasses.field(default_factory=dict)
+    """The raw metadata of the fields displayed by the transition screen, keyed by field ID."""
 
 
 @dataclass

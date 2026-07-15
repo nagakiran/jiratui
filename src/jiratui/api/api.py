@@ -1002,6 +1002,9 @@ class JiraAPI:
     async def transitions(self, issue_id_or_key: str) -> dict:
         """Retrieves the applicable transitions for a work item.
 
+        The `transitions.fields` expansion asks Jira to include, for every transition, the metadata of the fields
+        that the transition displays on its transition screen.
+
         **See Also**:
         - [api-rest-api-3-issue-issueidorkey-transitions-get](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/#api-rest-api-3-issue-issueidorkey-transitions-get)
 
@@ -1012,10 +1015,14 @@ class JiraAPI:
             A dictionary with the details of the transitions.
         """
         return await self._client.make_request(  # type:ignore[return-value]
-            method=httpx.AsyncClient.get, url=f'issue/{issue_id_or_key}/transitions'
+            method=httpx.AsyncClient.get,
+            url=f'issue/{issue_id_or_key}/transitions',
+            params={'expand': 'transitions.fields'},
         )
 
-    async def transition_issue(self, issue_id_or_key: str, transition_id: str) -> None:
+    async def transition_issue(
+        self, issue_id_or_key: str, transition_id: str, fields: dict | None = None
+    ) -> None:
         """Performs an issue transition.
 
         **See Also**:
@@ -1024,11 +1031,15 @@ class JiraAPI:
         Args:
             issue_id_or_key: the case-sensitive key of the work item.
             transition_id: the ID of the status transition.
+            fields: the values of the fields displayed by the transition screen, keyed by field ID. The values must
+                already be formatted the way Jira expects them.
 
         Returns:
             None
         """
-        payload = {'transition': transition_id}
+        payload: dict = {'transition': transition_id}
+        if fields:
+            payload['fields'] = fields
         await self._client.make_request(
             method=httpx.AsyncClient.post,
             url=f'issue/{issue_id_or_key}/transitions',

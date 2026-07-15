@@ -12,6 +12,8 @@ from jiratui.models import (
     Attachment,
     IssuePriority,
     IssueStatus,
+    IssueTransition,
+    IssueTransitionState,
     IssueType,
     JiraIssue,
     JiraIssueSearchResponse,
@@ -29,9 +31,11 @@ from jiratui.widgets.commons.widgets import (
     LabelsWidget,
     MultiUserPickerWidget,
     NumericInputWidget,
+    SelectionWidget,
     SingleUserPickerWidget,
 )
 from jiratui.widgets.screen import WorkItemSearchResult
+from jiratui.widgets.screens.transition import TransitionScreen
 from jiratui.widgets.work_item_details.details import IssueDetailsWidget
 from jiratui.widgets.work_item_details.fields import (
     IssueDetailsPrioritySelection,
@@ -404,50 +408,59 @@ async def test_determine_editable_fields_item_with_possible_parent(jira_issue, a
         assert result['editable_fields']['parent'] is True
 
 
-@patch.object(APIController, 'get_project_statuses')
+@patch.object(APIController, 'transitions')
 @pytest.mark.asyncio
-async def test_retrieve_applicable_status_codes_success_false(
-    get_project_statuses_mock: AsyncMock, app: JiraApp
+async def test_retrieve_applicable_transitions_success_false(
+    transitions_mock: AsyncMock, app: JiraApp
 ):
     # GIVEN
-    get_project_statuses_mock.return_value = APIControllerResponse(success=False)
+    transitions_mock.return_value = APIControllerResponse(success=False)
     async with app.run_test() as pilot:
         details_widget = IssueDetailsWidget()
         await app.mount(details_widget)
         await pilot.pause()
         # WHEN
-        await details_widget._retrieve_applicable_status_codes(
-            'P1', work_item_type_id='2', current_status_id='3'
+        await details_widget._retrieve_applicable_transitions(
+            'P1-1', current_status_id='3', current_status_name='In Progress'
         )
-        # THEN
-        assert details_widget.issue_status_selector.is_blank()
-        assert details_widget.issue_status_selector._options == [('', Select.NULL)]
+        # THEN the current status of the work item remains the only option
+        assert details_widget.issue_status_selector.selection == '3'
+        assert details_widget._transitions_by_status_id == {}
 
 
-@patch.object(APIController, 'get_project_statuses')
+@patch.object(APIController, 'transitions')
 @pytest.mark.asyncio
-async def test_retrieve_applicable_status_codes_success_without_current_status_id(
-    get_project_statuses_mock: AsyncMock, app: JiraApp
+async def test_retrieve_applicable_transitions_only_lists_reachable_statuses(
+    transitions_mock: AsyncMock, app: JiraApp
 ):
-    # GIVEN
-    get_project_statuses_mock.return_value = APIControllerResponse(
-        result={
-            '2': {
-                'issue_type_name': 'Task',
-                'issue_type_statuses': [IssueStatus(id='5', name='Done')],
-            }
-        }
+    # GIVEN a work item that can only be transitioned to "Done"
+    transitions_mock.return_value = APIControllerResponse(
+        result=[
+            IssueTransition(
+                id='31',
+                name='Done',
+                to_state=IssueTransitionState(id='5', name='Done'),
+                has_screen=True,
+                fields={'customfield_10343': {'name': 'Dev Complete Reason'}},
+            )
+        ]
     )
     async with app.run_test() as pilot:
         details_widget = IssueDetailsWidget()
         await app.mount(details_widget)
         await pilot.pause()
         # WHEN
-        await details_widget._retrieve_applicable_status_codes(
-            'P1', work_item_type_id='2', current_status_id='5'
+        await details_widget._retrieve_applicable_transitions(
+            'P1-1', current_status_id='3', current_status_name='In Progress'
         )
-        # THEN
-        assert details_widget.issue_status_selector.selection == '5'
+        # THEN the selector offers the current status and the status of the applicable transition
+        assert details_widget.issue_status_selector._options[1:] == [
+            ('Done', '5'),
+            ('In Progress', '3'),
+        ]
+        assert details_widget.issue_status_selector.selection == '3'
+        # AND the transition is cached so that its screen can be displayed when the item is saved
+        assert details_widget._transitions_by_status_id['5'].id == '31'
 
 
 @pytest.mark.asyncio
@@ -1125,6 +1138,7 @@ async def test_save_work_item_without_payload(
         build_payload_for_update_mock.return_value = None
         # WHEN
         await details_widget.action_save_work_item()
+        await app.workers.wait_for_complete()
         # THEN
         update_issue_mock.assert_not_called()
 
@@ -1153,6 +1167,7 @@ async def test_save_work_item_without_payload_issue_not_require_transition(
         details_widget.issue_status_selector.value = '5'
         # WHEN
         await details_widget.action_save_work_item()
+        await app.workers.wait_for_complete()
         # THEN
         update_issue_mock.assert_not_called()
         transition_issue_status_mock.assert_not_called()
@@ -1185,9 +1200,10 @@ async def test_save_work_item_without_payload_issue_requires_transition(
         transition_issue_status_mock.return_value = APIControllerResponse()
         # WHEN
         await details_widget.action_save_work_item()
+        await app.workers.wait_for_complete()
         # THEN
         update_issue_mock.assert_not_called()
-        transition_issue_status_mock.assert_called_once_with('key-2', '5')
+        transition_issue_status_mock.assert_called_once_with('key-2', '5', fields=None)
         refresh_work_item_details_mock.assert_called_once()
 
 
@@ -1218,9 +1234,182 @@ async def test_save_work_item_without_payload_issue_requires_transition_transiti
         transition_issue_status_mock.return_value = APIControllerResponse(success=False)
         # WHEN
         await details_widget.action_save_work_item()
+        await app.workers.wait_for_complete()
         # THEN
         update_issue_mock.assert_not_called()
-        transition_issue_status_mock.assert_called_once_with('key-2', '5')
+        transition_issue_status_mock.assert_called_once_with('key-2', '5', fields=None)
+        refresh_work_item_details_mock.assert_not_called()
+
+
+@patch.object(IssueDetailsWidget, '_refresh_work_item_details')
+@patch.object(APIController, 'transition_issue_status')
+@patch.object(APIController, 'update_issue')
+@patch.object(IssueDetailsWidget, '_build_payload_for_update')
+@patch.object(IssueDetailsWidget, 'issue')
+@pytest.mark.asyncio
+async def test_save_work_item_transition_screen_stays_responsive_and_submits_the_selected_value(
+    issue_mock: Mock,
+    build_payload_for_update_mock: Mock,
+    update_issue_mock: AsyncMock,
+    transition_issue_status_mock: AsyncMock,
+    refresh_work_item_details_mock: Mock,
+    jira_issue,
+    app: JiraApp,
+):
+    """Drives the real transition screen, without mocking it.
+
+    Saving must not block the message pump; otherwise the transition screen is displayed but never receives the events
+    that let the user fill it in and dismiss it.
+    """
+
+    async with app.run_test() as pilot:
+        # GIVEN a work item that is being moved to a status whose transition displays a screen
+        details_widget = IssueDetailsWidget()
+        await app.mount(details_widget)
+        await pilot.pause()
+        issue_mock.configure_mock(status=IssueStatus(id='1', name='Open'), key=jira_issue.key)
+        build_payload_for_update_mock.return_value = {}
+        details_widget.issue_status_selector.set_options([('Dev Complete', '5')])
+        details_widget.issue_status_selector.value = '5'
+        details_widget._transitions_by_status_id = {
+            '5': IssueTransition(
+                id='31',
+                name='Dev Complete',
+                to_state=IssueTransitionState(id='5', name='Dev Complete'),
+                has_screen=True,
+                fields={
+                    'customfield_10343': {
+                        'required': False,
+                        'schema': {'type': 'option'},
+                        'name': 'Dev Complete Reason',
+                        'key': 'customfield_10343',
+                        'operations': ['set'],
+                        'allowedValues': [{'value': 'Fixed', 'id': '11623'}],
+                    }
+                },
+            )
+        }
+        transition_issue_status_mock.return_value = APIControllerResponse()
+
+        # WHEN the user saves the work item
+        await details_widget.action_save_work_item()
+        await pilot.pause()
+
+        # THEN the transition screen is displayed and it responds to the user
+        screen = app.screen
+        assert isinstance(screen, TransitionScreen)
+        selector = screen.fields_container.query_one(SelectionWidget)
+
+        # WHEN the user expands the dropdown and picks "Fixed" with the keyboard
+        await pilot.press('enter')
+        await pilot.pause()
+        assert selector.expanded is True, 'the dropdown of the transition screen did not expand'
+        await pilot.press('down')
+        await pilot.press('enter')
+        await pilot.pause()
+        assert selector.expanded is False
+        assert selector.selection == '11623'
+
+        # WHEN the user saves the transition screen
+        await pilot.click('#transition-button-save')
+        await app.workers.wait_for_complete()
+
+        # THEN the work item is transitioned with the value that the user selected
+        transition_issue_status_mock.assert_called_once_with(
+            'key-2', '5', fields={'customfield_10343': {'id': '11623'}}
+        )
+        refresh_work_item_details_mock.assert_called_once()
+
+
+@patch.object(IssueDetailsWidget, '_collect_transition_fields')
+@patch.object(IssueDetailsWidget, '_refresh_work_item_details')
+@patch.object(APIController, 'transition_issue_status')
+@patch.object(APIController, 'update_issue')
+@patch.object(IssueDetailsWidget, '_build_payload_for_update')
+@patch.object(IssueDetailsWidget, 'issue')
+@pytest.mark.asyncio
+async def test_save_work_item_with_a_transition_that_displays_a_screen(
+    issue_mock: Mock,
+    build_payload_for_update_mock: Mock,
+    update_issue_mock: AsyncMock,
+    transition_issue_status_mock: AsyncMock,
+    refresh_work_item_details_mock: Mock,
+    collect_transition_fields_mock: AsyncMock,
+    jira_issue,
+    app: JiraApp,
+):
+    # GIVEN a transition that displays a screen with a mandatory "Dev Complete Reason" field
+    async with app.run_test() as pilot:
+        details_widget = IssueDetailsWidget()
+        await app.mount(details_widget)
+        await pilot.pause()
+        issue_mock.configure_mock(status=IssueStatus(id='1', name='Open'), key=jira_issue.key)
+        build_payload_for_update_mock.return_value = {}
+        details_widget.issue_status_selector.set_options([('Dev Complete', '5')])
+        details_widget.issue_status_selector.value = '5'
+        details_widget._transitions_by_status_id = {
+            '5': IssueTransition(
+                id='31',
+                name='Dev Complete',
+                to_state=IssueTransitionState(id='5', name='Dev Complete'),
+                has_screen=True,
+                fields={'customfield_10343': {'name': 'Dev Complete Reason'}},
+            )
+        }
+        collect_transition_fields_mock.return_value = {'customfield_10343': {'id': '11623'}}
+        transition_issue_status_mock.return_value = APIControllerResponse()
+        # WHEN
+        await details_widget.action_save_work_item()
+        await app.workers.wait_for_complete()
+        # THEN the values of the fields of the transition screen are sent along with the transition
+        collect_transition_fields_mock.assert_called_once()
+        transition_issue_status_mock.assert_called_once_with(
+            'key-2', '5', fields={'customfield_10343': {'id': '11623'}}
+        )
+        refresh_work_item_details_mock.assert_called_once()
+
+
+@patch.object(IssueDetailsWidget, '_collect_transition_fields')
+@patch.object(IssueDetailsWidget, '_refresh_work_item_details')
+@patch.object(APIController, 'transition_issue_status')
+@patch.object(APIController, 'update_issue')
+@patch.object(IssueDetailsWidget, '_build_payload_for_update')
+@patch.object(IssueDetailsWidget, 'issue')
+@pytest.mark.asyncio
+async def test_save_work_item_with_a_cancelled_transition_screen(
+    issue_mock: Mock,
+    build_payload_for_update_mock: Mock,
+    update_issue_mock: AsyncMock,
+    transition_issue_status_mock: AsyncMock,
+    refresh_work_item_details_mock: Mock,
+    collect_transition_fields_mock: AsyncMock,
+    jira_issue,
+    app: JiraApp,
+):
+    # GIVEN
+    async with app.run_test() as pilot:
+        details_widget = IssueDetailsWidget()
+        await app.mount(details_widget)
+        await pilot.pause()
+        issue_mock.configure_mock(status=IssueStatus(id='1', name='Open'), key=jira_issue.key)
+        build_payload_for_update_mock.return_value = {}
+        details_widget.issue_status_selector.set_options([('Dev Complete', '5')])
+        details_widget.issue_status_selector.value = '5'
+        details_widget._transitions_by_status_id = {
+            '5': IssueTransition(
+                id='31',
+                name='Dev Complete',
+                to_state=IssueTransitionState(id='5', name='Dev Complete'),
+                has_screen=True,
+                fields={'customfield_10343': {'name': 'Dev Complete Reason'}},
+            )
+        }
+        # WHEN the user cancels the transition screen
+        collect_transition_fields_mock.return_value = None
+        await details_widget.action_save_work_item()
+        await app.workers.wait_for_complete()
+        # THEN the work item is not transitioned
+        transition_issue_status_mock.assert_not_called()
         refresh_work_item_details_mock.assert_not_called()
 
 
@@ -1251,6 +1440,7 @@ async def test_save_work_item_with_payload_issue_not_require_transition_updates_
         update_issue_mock.return_value = APIControllerResponse()
         # WHEN
         await details_widget.action_save_work_item()
+        await app.workers.wait_for_complete()
         # THEN
         update_issue_mock.assert_called_once_with(issue_mock, {'a': 1})
         transition_issue_status_mock.assert_not_called()
@@ -1284,6 +1474,7 @@ async def test_save_work_item_with_payload_issue_not_require_transition_fails_is
         update_issue_mock.return_value = APIControllerResponse(success=False)
         # WHEN
         await details_widget.action_save_work_item()
+        await app.workers.wait_for_complete()
         # THEN
         update_issue_mock.assert_called_once_with(issue_mock, {'a': 1})
         transition_issue_status_mock.assert_not_called()
@@ -1319,6 +1510,7 @@ async def test_save_work_item_with_payload_issue_not_require_transition_fails_wi
         update_issue_mock.side_effect = exception_type()
         # WHEN
         await details_widget.action_save_work_item()
+        await app.workers.wait_for_complete()
         # THEN
         update_issue_mock.assert_called_once_with(issue_mock, {'a': 1})
         transition_issue_status_mock.assert_not_called()
@@ -1342,10 +1534,10 @@ async def test_watch_issue(jira_issue, app: JiraApp):
 @patch.object(IssueDetailsWidget, '_add_dynamic_widgets')
 @patch.object(IssueDetailsWidget, '_determine_issue_flagged_status')
 @patch.object(IssueDetailsWidget, '_extract_editable_and_required_fields')
-@patch.object(APIController, 'get_project_statuses')
+@patch.object(APIController, 'transitions')
 @pytest.mark.asyncio
 async def test_watch_issue_with_valid_issue(
-    get_project_statuses_mock: AsyncMock,
+    transitions_mock: AsyncMock,
     extract_editable_and_required_fields_mock: Mock,
     determine_issue_flagged_status_mock: Mock,
     add_dynamic_widgets_mock: Mock,
@@ -1359,8 +1551,12 @@ async def test_watch_issue_with_valid_issue(
         details_widget = IssueDetailsWidget()
         await app.mount(details_widget)
         await pilot.pause()
-        get_project_statuses_mock.return_value = APIControllerResponse(
-            result={'2': {'issue_type_statuses': [IssueStatus(id='3', name='Done')]}}
+        transitions_mock.return_value = APIControllerResponse(
+            result=[
+                IssueTransition(
+                    id='31', name='Done', to_state=IssueTransitionState(id='3', name='Done')
+                )
+            ]
         )
         extract_editable_and_required_fields_mock.return_value = {
             'editable_fields': {
@@ -1375,7 +1571,7 @@ async def test_watch_issue_with_valid_issue(
         details_widget.watch_issue(jira_issue)
         await pilot.pause()
         # THEN
-        get_project_statuses_mock.assert_called_once_with('P1')
+        transitions_mock.assert_called_once_with('key-2')
         extract_editable_and_required_fields_mock.assert_called_once()
         assert details_widget.assignee_selector.account_id == '2'
         assert details_widget.assignee_selector.update_enabled is True
@@ -1405,10 +1601,10 @@ async def test_watch_issue_with_valid_issue(
 @patch.object(IssueDetailsWidget, '_add_dynamic_widgets')
 @patch.object(IssueDetailsWidget, '_determine_issue_flagged_status')
 @patch.object(IssueDetailsWidget, '_extract_editable_and_required_fields')
-@patch.object(APIController, 'get_project_statuses')
+@patch.object(APIController, 'transitions')
 @pytest.mark.asyncio
 async def test_watch_issue_with_valid_issue_alternative_values(
-    get_project_statuses_mock: AsyncMock,
+    transitions_mock: AsyncMock,
     extract_editable_and_required_fields_mock: Mock,
     determine_issue_flagged_status_mock: Mock,
     add_dynamic_widgets_mock: Mock,
@@ -1422,8 +1618,12 @@ async def test_watch_issue_with_valid_issue_alternative_values(
         details_widget = IssueDetailsWidget()
         await app.mount(details_widget)
         await pilot.pause()
-        get_project_statuses_mock.return_value = APIControllerResponse(
-            result={'2': {'issue_type_statuses': [IssueStatus(id='3', name='Done')]}}
+        transitions_mock.return_value = APIControllerResponse(
+            result=[
+                IssueTransition(
+                    id='31', name='Done', to_state=IssueTransitionState(id='3', name='Done')
+                )
+            ]
         )
         extract_editable_and_required_fields_mock.return_value = {
             'editable_fields': {
@@ -1443,7 +1643,7 @@ async def test_watch_issue_with_valid_issue_alternative_values(
         details_widget.watch_issue(jira_issue)
         await pilot.pause()
         # THEN
-        get_project_statuses_mock.assert_called_once_with('P1')
+        transitions_mock.assert_called_once_with('key-2')
         extract_editable_and_required_fields_mock.assert_called_once()
         assert details_widget.assignee_selector.account_id is None
         assert details_widget.assignee_selector.update_enabled is True

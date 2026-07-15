@@ -1446,3 +1446,52 @@ MultiSelectWidget {
 .time-tracking-container {
     height: auto;
 }
+
+/*
+================================================================================
+TransitionScreen
+================================================================================
+*/
+TransitionScreen {
+    align: center middle;
+    background: $background 80%;
+}
+
+TransitionScreen > Vertical {
+    width: 60%;
+    height: auto;
+    max-height: 80%;
+    border: round $foreground;
+    padding: 0 1;
+    & > Static {
+        margin-top: 1;
+    }
+}
+
+#transition-fields {
+    height: auto;
+    max-height: 20;
+}
+
+#transition-button-save {
+    width: 20%;
+    padding: 0 0;
+    box_sizing: content-box;
+    border-top: blank $surface-lighten-1;
+    border-bottom: blank $surface-lighten-1;
+}
+
+#transition-button-quit {
+    width: 20%;
+    padding: 0 0;
+    box_sizing: content-box;
+    border-top: blank $surface-lighten-1;
+    border-bottom: blank $surface-lighten-1;
+}
+
+.transition-screen-grid-buttons {
+    grid-size: 2 1;
+    grid-columns: 50% 50%;
+    align: center middle;
+    height: auto;
+}

@@ -3103,6 +3103,44 @@ async def test_transitions(transitions_mock: Mock, jira_api_controller: APIContr
 
 @pytest.mark.asyncio
 @patch.object(JiraAPI, 'transitions')
+async def test_transitions_with_a_transition_screen(
+    transitions_mock: Mock, jira_api_controller: APIController
+):
+    # GIVEN a transition that displays a screen with a "Dev Complete Reason" field
+    fields = {
+        'customfield_10343': {
+            'required': False,
+            'schema': {
+                'type': 'option',
+                'custom': 'com.atlassian.jira.plugin.system.customfieldtypes:select',
+            },
+            'name': 'Dev Complete Reason',
+            'key': 'customfield_10343',
+            'operations': ['set'],
+            'allowedValues': [{'value': 'Fixed', 'id': '11623'}],
+        }
+    }
+    transitions_mock.return_value = {
+        'transitions': [
+            {
+                'to': {'description': 'a description', 'name': 'Dev Complete', 'id': '5'},
+                'id': '31',
+                'name': 'Dev Complete',
+                'hasScreen': True,
+                'fields': fields,
+            },
+        ]
+    }
+    # WHEN
+    response = await jira_api_controller.transitions('1')
+    # THEN the metadata of the fields of the transition screen is preserved
+    assert response.success is True
+    assert response.result[0].has_screen is True
+    assert response.result[0].fields == fields
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'transitions')
 async def test_transitions_with_api_error(
     transitions_mock: Mock, jira_api_controller: APIController
 ):
@@ -3139,6 +3177,26 @@ async def test_transition_issue_status(
     assert response.result is None
     transitions_mock.assert_called_once_with('1')
     transition_issue_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'transition_issue')
+@patch.object(APIController, 'transitions')
+async def test_transition_issue_status_with_transition_screen_fields(
+    transitions_mock: Mock,
+    transition_issue_mock: Mock,
+    transitions: list[IssueTransition],
+    jira_api_controller: APIController,
+):
+    # GIVEN
+    transitions_mock.return_value = APIControllerResponse(result=transitions)
+    transition_issue_mock.return_value = APIControllerResponse(result=[])
+    fields = {'customfield_10343': {'id': '11623'}}
+    # WHEN
+    response = await jira_api_controller.transition_issue_status('1', '3', fields=fields)
+    # THEN the values of the fields of the transition screen are sent along with the transition
+    assert response.success is True
+    transition_issue_mock.assert_called_once_with('1', '1', fields=fields)
 
 
 @pytest.mark.asyncio

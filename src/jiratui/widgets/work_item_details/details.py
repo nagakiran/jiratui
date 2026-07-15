@@ -66,7 +66,7 @@ from textual.widgets import LoadingIndicator, ProgressBar
 from jiratui.api_controller.controller import APIControllerResponse
 from jiratui.config import CONFIGURATION
 from jiratui.exceptions import UpdateWorkItemException, ValidationError
-from jiratui.models import IssuePriority, JiraIssue, TimeTracking
+from jiratui.models import IssuePriority, IssueTransition, JiraIssue, TimeTracking
 from jiratui.utils.work_item_updates import (
     work_item_assignee_has_changed,
     work_item_parent_has_changed,
@@ -88,6 +88,7 @@ from jiratui.widgets.commons.widgets import (
     TextInputWidget,
     URLWidget,
 )
+from jiratui.widgets.screens.transition import TransitionScreen
 from jiratui.widgets.work_item_details.factory import create_dynamic_widgets_for_updating_work_item
 from jiratui.widgets.work_item_details.fields import (
     IssueDetailsPrioritySelection,
@@ -203,6 +204,9 @@ class IssueDetailsWidget(Vertical):
         metadata or the configuration of the field used for storing the value of the flag."""
         self._work_item_key: str | None = None
         """The key of the work item currently being displayed."""
+        self._transitions_by_status_id: dict[str, IssueTransition] = {}
+        """The transitions applicable to the work item currently being displayed, keyed by the ID of the status that
+        each transition moves the work item to."""
 
     @property
     def issue_is_flagged(self) -> bool:
@@ -669,6 +673,43 @@ class IssueDetailsWidget(Vertical):
     async def action_save_work_item(self) -> None:
         """Updates the fields of a work item that have changed.
 
+        The work is handed over to a worker and **not** awaited. Saving a work item may require displaying the screen
+        of a status transition, and waiting for a screen to be dismissed is only allowed from a worker. Awaiting the
+        worker here would block the message pump that dispatches this action, and the screen would never receive the
+        events that dismiss it.
+
+        Returns:
+            `None`.
+        """
+
+        self.run_worker(self._save_work_item(), exit_on_error=False)
+
+    async def _collect_transition_fields(self, transition: IssueTransition) -> dict | None:
+        """Collects the values of the fields displayed by the screen of a status transition.
+
+        Args:
+            transition: the transition that the work item is about to undergo.
+
+        Returns:
+            A dictionary with the values of the fields of the transition screen; `None` if the user cancelled the
+            transition.
+        """
+
+        if not transition.fields:
+            return {}
+
+        return await self.app.push_screen_wait(
+            TransitionScreen(
+                self.issue.key,
+                transition,
+                adf_support_enabled=CONFIGURATION.get().cloud
+                and CONFIGURATION.get().jira_api_version == 3,
+            )
+        )
+
+    async def _save_work_item(self) -> None:
+        """Updates the fields of a work item that have changed.
+
         Returns:
             `None`.
         """
@@ -725,21 +766,35 @@ class IssueDetailsWidget(Vertical):
                     self.notify(response.error, severity='error', title='Update Work Item')
 
         if issue_requires_transition:
-            response = await application.api.transition_issue_status(
-                self.issue.key, self.issue_status_selector.selection
-            )
-            if not response.success:
+            new_status_id: str = self.issue_status_selector.selection
+            transition_fields: dict | None = {}
+            if transition := self._transitions_by_status_id.get(new_status_id):
+                # some workflows display a screen when the work item is transitioned; the values of the fields of that
+                # screen must be sent along with the transition
+                self.hide_loading()
+                transition_fields = await self._collect_transition_fields(transition)
+                self.show_loading()
+
+            if transition_fields is None:
                 self.notify(
-                    f'Failed to transition the work item to a different status: {response.error}',
-                    severity='error',
-                    title='Update Work Item',
+                    'The status of the work item was not updated.', title='Update Work Item'
                 )
             else:
-                issue_was_updated = True
-                self.notify(
-                    'Successfully transitioned the work item to a different status.',
-                    title='Update Work Item',
+                response = await application.api.transition_issue_status(
+                    self.issue.key, new_status_id, fields=transition_fields or None
                 )
+                if not response.success:
+                    self.notify(
+                        f'Failed to transition the work item to a different status: {response.error}',
+                        severity='error',
+                        title='Update Work Item',
+                    )
+                else:
+                    issue_was_updated = True
+                    self.notify(
+                        'Successfully transitioned the work item to a different status.',
+                        title='Update Work Item',
+                    )
 
         if issue_was_updated:
             # fetch the issue again to retrieve the latest changes and update the form
@@ -817,26 +872,53 @@ class IssueDetailsWidget(Vertical):
             'required_fields': required_fields,
         }
 
-    async def _retrieve_applicable_status_codes(
+    async def _retrieve_applicable_transitions(
         self,
-        project_key: str,
-        work_item_type_id: str,
+        work_item_key: str,
         current_status_id: str,
+        current_status_name: str,
     ) -> None:
+        """Populates the status selector with the statuses that the work item can actually be transitioned to.
+
+        Jira only allows a work item to move to the statuses for which the workflow defines a transition from the
+        current status. Offering any other status would fail at save time, so the selector only lists the statuses of
+        the applicable transitions, plus the current status of the work item.
+
+        Args:
+            work_item_key: the (case-sensitive) key of the work item.
+            current_status_id: the ID of the current status of the work item.
+            current_status_name: the name of the current status of the work item.
+
+        Returns:
+            None.
+        """
+
+        self._transitions_by_status_id = {}
+        # the current status is always an option; otherwise the selector can not display the status of the work item
+        options: dict[str, str] = {current_status_id: current_status_name}
+
         application = cast('JiraApp', self.app)  # type: ignore[name-defined] # noqa: F821
-        response: APIControllerResponse = await application.api.get_project_statuses(project_key)
+        response: APIControllerResponse = await application.api.transitions(work_item_key)
         if not response.success:
-            self.issue_status_selector.set_options([])
-        else:
-            status_codes_by_work_item_type_id: dict = response.result or {}
-            record: dict = status_codes_by_work_item_type_id.get(work_item_type_id, {})
-            work_status_codes_options = sorted(
-                [(status.name, str(status.id)) for status in record.get('issue_type_statuses', [])],
-                key=lambda x: x[0],
+            self.notify(
+                f'Unable to retrieve the status transitions of the work item: {response.error}',
+                severity='error',
+                title='Update Work Item',
             )
-            self.issue_status_selector.set_options(work_status_codes_options)
-            if current_status_id and work_status_codes_options:
-                self.issue_status_selector.value = current_status_id
+        else:
+            transition: IssueTransition
+            for transition in response.result or []:
+                if not transition.to_state:
+                    continue
+                self._transitions_by_status_id[transition.to_state.id] = transition
+                options[transition.to_state.id] = transition.to_state.name
+
+        status_options: list[tuple[str, str]] = sorted(
+            [(name, status_id) for status_id, name in options.items()], key=lambda option: option[0]
+        )
+        self.issue_status_selector.set_options(status_options)
+        if current_status_id:
+            self.issue_status_selector.value = current_status_id
 
     def watch_issue(self, work_item: JiraIssue | None) -> None:
         """Updates the form fields with the details of the work item selected by the user.
@@ -864,10 +946,10 @@ class IssueDetailsWidget(Vertical):
 
         self._work_item_key = work_item.key
 
-        # fetch the list of status codes applicable for this work item and its type
+        # fetch the statuses that this work item can be transitioned to
         self.run_worker(
-            self._retrieve_applicable_status_codes(
-                work_item.project.key, work_item.issue_type.id, str(work_item.status.id)
+            self._retrieve_applicable_transitions(
+                work_item.key, str(work_item.status.id), work_item.status.name
             )
         )
 

@@ -1766,18 +1766,22 @@ class APIController:
                             name=to_state.get('name'),
                             description=to_state.get('description'),
                         ),
+                        has_screen=bool(transition.get('hasScreen', False)),
+                        fields=transition.get('fields') or {},
                     )
                 )
         return APIControllerResponse(result=transitions)
 
     async def transition_issue_status(
-        self, issue_id_or_key: str, status_id: str
+        self, issue_id_or_key: str, status_id: str, fields: dict | None = None
     ) -> APIControllerResponse:
         """Transitions a work item to a new status.
 
         Args:
             issue_id_or_key: the (case-sensitive) key of the work item.
             status_id: the ID of the new status.
+            fields: the values of the fields displayed by the transition screen, keyed by field ID. The values must
+                already be formatted the way Jira expects them.
 
         Returns:
             An instance of `APIControllerResponse(success=True)` if the work item was transitioned;
@@ -1802,7 +1806,7 @@ class APIController:
             )
 
         try:
-            await self.api.transition_issue(issue_id_or_key, transition_id)
+            await self.api.transition_issue(issue_id_or_key, transition_id, fields=fields)
         except Exception as e:
             exception_details: dict = self._extract_exception_details(e)
             self.logger.error(

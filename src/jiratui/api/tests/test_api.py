@@ -1707,6 +1707,8 @@ async def test_get_transitions(jira_api: JiraAPI):
     result = await jira_api.transitions('1')
     # THEN
     assert route.calls.last.request.url.path == '/rest/api/3/issue/1/transitions'
+    # the fields of the transition screens are only returned when they are explicitly requested
+    assert route.calls.last.request.url.params['expand'] == 'transitions.fields'
     assert result == {
         'transitions': [
             {
@@ -1766,6 +1768,27 @@ async def test_transition_issue(jira_api: JiraAPI):
     # THEN
     assert route.calls.last.request.url.path == '/rest/api/3/issue/1/transitions'
     assert json.loads(route.calls.last.request.content) == {'transition': '2'}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_transition_issue_with_transition_screen_fields(jira_api: JiraAPI):
+    # GIVEN
+    route = respx.post(get_url_pattern('issue/1/transitions'))
+    route.mock(
+        return_value=httpx.Response(
+            204,
+            json=None,
+        )
+    )
+    # WHEN
+    await jira_api.transition_issue('1', '2', fields={'customfield_10343': {'id': '11623'}})
+    # THEN
+    assert route.calls.last.request.url.path == '/rest/api/3/issue/1/transitions'
+    assert json.loads(route.calls.last.request.content) == {
+        'transition': '2',
+        'fields': {'customfield_10343': {'id': '11623'}},
+    }
 
 
 @pytest.mark.asyncio

@@ -29,7 +29,6 @@ from textual.widgets import (
 from jiratui.api_controller.controller import APIControllerResponse
 from jiratui.config import CONFIGURATION
 from jiratui.models import IssueType, JiraIssue, Project
-from jiratui.widgets.commons import CustomFieldType
 from jiratui.widgets.commons.adf import ADFMarkdownTextAreaWidget
 from jiratui.widgets.commons.base import (
     FieldMode,
@@ -37,6 +36,7 @@ from jiratui.widgets.commons.base import (
     MultiUserPickerAutoComplete,
     WorkItemKeyAutoComplete,
 )
+from jiratui.widgets.commons.factory_utils import format_field_value_for_api
 from jiratui.widgets.commons.users import JiraUserInput, UsersAutoComplete
 from jiratui.widgets.commons.widgets import (
     LabelsWidget,
@@ -658,9 +658,6 @@ class AddWorkItemScreen(Screen[dict[str, Any]]):
     def _format_field_value(field_id: str, value: Any, field_metadata: dict) -> Any:
         """Formats a field's value based on the field's metadata.
 
-        This consolidated logic handles different field types like user pickers, floats,
-        labels, and select fields. Extracted from inline logic for reusability.
-
         Args:
             field_id: the Jira field ID.
             value: the raw value from the form widget.
@@ -670,50 +667,7 @@ class AddWorkItemScreen(Screen[dict[str, Any]]):
             The formatted value ready for API submission, or None to skip the field.
         """
 
-        if not value:
-            return None
-
-        schema = field_metadata.get('schema', {})
-        custom_type = schema.get('custom')
-
-        if custom_type == CustomFieldType.USER_PICKER.value:
-            return {'accountId': value}
-
-        elif custom_type == CustomFieldType.FLOAT.value or schema.get('type') == 'number':
-            if value:  # Type-safe check to prevent ~AlwaysFalsy error
-                try:
-                    return float(value)
-                except (ValueError, TypeError):
-                    # invalid float - skip this field
-                    return None
-            return None
-
-        # labels field (array of strings)
-        elif field_id == 'labels' or (
-            schema.get('type') == 'array' and schema.get('items') == 'strings'
-        ):
-            if isinstance(value, str):
-                # split by comma and strip whitespace from each label
-                return [label.strip() for label in value.split(',') if label.strip()]
-            elif isinstance(value, list):
-                return value
-            else:
-                return []
-
-        # select-type fields (fields with allowedValues in the metadata)
-        elif field_metadata.get('allowedValues'):
-            # array type fields (like multi-select) need array of objects
-            if schema.get('type') == 'array':
-                if isinstance(value, list):
-                    return [{'id': v} for v in value]
-                else:
-                    return [{'id': value}]
-            else:
-                # single-select: convert to object with 'id' key
-                return {'id': value}
-
-        # default: pass value as-is
-        return value
+        return format_field_value_for_api(field_id, value, field_metadata)
 
     def action_save_work_item(self) -> None:
         self.handle_save()
