@@ -9,6 +9,8 @@ from jiratui.api_controller.controller import APIController
 from jiratui.app import JiraApp
 from jiratui.config import ApplicationConfiguration
 from jiratui.models import WorkItemsSearchOrderBy
+from jiratui.utils.session import ApplicationSession
+from jiratui.widgets.commons.jql_autocomplete import jql_value_aliases
 from jiratui.widgets.screen import MainScreen
 from jiratui.widgets.screens.text_search import TextSearchScreen
 
@@ -244,3 +246,30 @@ def test_build_jql_query(
     query = screen._build_jql_query(search_term, jql_expression, advanced_search)
     # THEN
     assert query == expected_query
+
+
+def test_build_jql_query_resolves_the_values_picked_from_the_autocomplete(jira_api_controller):
+    # the expression shows the name of the user; the API only understands their account id
+    # GIVEN
+    ApplicationSession().clear()
+    jql_value_aliases()[('dev engineers', 'Naga Kiran K - naga@example.com')] = (
+        '5c017f7dc22785142f67f57b'
+    )
+    screen = MainScreen(api=jira_api_controller)
+    # WHEN
+    query = screen._build_jql_query(
+        None, '"Dev Engineers" in ("Naga Kiran K - naga@example.com")', False
+    )
+    # THEN
+    assert query == '"Dev Engineers" in (5c017f7dc22785142f67f57b)'
+    ApplicationSession().clear()
+
+
+def test_build_jql_query_leaves_an_expression_without_aliases_untouched(jira_api_controller):
+    # GIVEN
+    ApplicationSession().clear()
+    screen = MainScreen(api=jira_api_controller)
+    # WHEN
+    query = screen._build_jql_query(None, 'assignee = currentUser()', False)
+    # THEN
+    assert query == 'assignee = currentUser()'

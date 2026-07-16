@@ -1,6 +1,13 @@
 import pytest
 
-from jiratui.utils.jql import JQLContext, JQLTokenKind, context_at, tokenize
+from jiratui.utils.jql import (
+    JQLContext,
+    JQLTokenKind,
+    context_at,
+    quote_if_needed,
+    resolve_values,
+    tokenize,
+)
 
 
 def context_for(text_with_cursor: str):
@@ -257,3 +264,89 @@ def test_negative_cursor_is_clamped():
     context = context_at('project', -5)
     assert context.context is JQLContext.FIELD
     assert context.prefix == ''
+
+
+@pytest.mark.parametrize(
+    'value, expected',
+    [
+        pytest.param('SB', 'SB', id='no-quotes-needed'),
+        pytest.param('In Progress', '"In Progress"', id='contains-a-space'),
+        pytest.param('a,b', '"a,b"', id='contains-a-comma'),
+        pytest.param('currentUser()', 'currentUser()', id='a-function-is-not-quoted'),
+        pytest.param('say "hi"', '"say \\"hi\\""', id='escapes-quotes'),
+        pytest.param('', '', id='empty'),
+    ],
+)
+def test_quote_if_needed(value, expected):
+    assert quote_if_needed(value) == expected
+
+
+ALIASES = {
+    ('dev engineers', 'Naga Kiran K - naga@example.com'): '5c017f7dc22785142f67f57b',
+    ('dev engineers', 'Ritesh Agrawal - ritesh@example.com'): '6a117f7dc22785142f67f99c',
+    ('assignee', 'Naga Kiran K - naga@example.com'): '5c017f7dc22785142f67f57b',
+}
+
+
+def test_resolve_values_replaces_a_known_alias():
+    assert (
+        resolve_values('"Dev Engineers" in ("Naga Kiran K - naga@example.com")', ALIASES)
+        == '"Dev Engineers" in (5c017f7dc22785142f67f57b)'
+    )
+
+
+def test_resolve_values_replaces_every_value_of_a_list():
+    assert (
+        resolve_values(
+            '"Dev Engineers" in ("Naga Kiran K - naga@example.com", '
+            '"Ritesh Agrawal - ritesh@example.com")',
+            ALIASES,
+        )
+        == '"Dev Engineers" in (5c017f7dc22785142f67f57b, 6a117f7dc22785142f67f99c)'
+    )
+
+
+def test_resolve_values_leaves_an_unknown_value_untouched():
+    # an expression that does not use a suggestion has to survive unchanged
+    expression = 'project = SB AND status = "In Progress"'
+    assert resolve_values(expression, ALIASES) == expression
+
+
+def test_resolve_values_does_not_apply_an_alias_of_another_field():
+    # 'Ritesh Agrawal' is an alias of "Dev Engineers", not of 'reporter'
+    expression = 'reporter = "Ritesh Agrawal - ritesh@example.com"'
+    assert resolve_values(expression, ALIASES) == expression
+
+
+def test_resolve_values_resolves_each_clause_against_its_own_field():
+    assert (
+        resolve_values(
+            'assignee = "Naga Kiran K - naga@example.com" AND status = Open '
+            'AND "Dev Engineers" in ("Ritesh Agrawal - ritesh@example.com")',
+            ALIASES,
+        )
+        == 'assignee = 5c017f7dc22785142f67f57b AND status = Open '
+        'AND "Dev Engineers" in (6a117f7dc22785142f67f99c)'
+    )
+
+
+def test_resolve_values_does_not_touch_a_field_name_that_matches_an_alias():
+    # the ORDER BY clause names fields, not values
+    expression = 'project = SB ORDER BY assignee DESC'
+    assert resolve_values(expression, ALIASES) == expression
+
+
+def test_resolve_values_quotes_a_resolved_value_that_needs_it():
+    aliases = {('status', 'Doing'): 'In Progress'}
+    assert resolve_values('status = Doing', aliases) == 'status = "In Progress"'
+
+
+@pytest.mark.parametrize(
+    'expression, aliases',
+    [
+        pytest.param('', ALIASES, id='empty-expression'),
+        pytest.param('project = SB', {}, id='no-aliases'),
+    ],
+)
+def test_resolve_values_with_nothing_to_do(expression, aliases):
+    assert resolve_values(expression, aliases) == expression

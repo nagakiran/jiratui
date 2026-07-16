@@ -11,6 +11,7 @@ it.
 ```
 """
 
+from collections.abc import Mapping
 import dataclasses
 from dataclasses import dataclass
 import enum
@@ -488,3 +489,61 @@ def _context_after(tokens: list[JQLToken], cursor: int) -> JQLCursorContext:
         replace_end=cursor,
         keywords=LOGICAL_KEYWORDS + ('order by',),
     )
+
+
+def quote_if_needed(value: str) -> str:
+    """Quotes a value of a JQL expression when it cannot be used as-is.
+
+    Args:
+        value: the value to use in the expression.
+
+    Returns:
+        The value, quoted if it contains a character that would make the expression invalid.
+    """
+
+    if not value:
+        return value
+    if value.endswith('()'):
+        # a function; e.g.: currentUser()
+        return value
+    if any(character in value for character in ' ",()[]{}'):
+        escaped = value.replace('"', '\\"')
+        return f'"{escaped}"'
+    return value
+
+
+def resolve_values(text: str, aliases: Mapping[tuple[str, str], str]) -> str:
+    """Replaces the readable values of an expression with the values that the API understands.
+
+    The app displays the values of a field the way a person recognises them — e.g. the name of a user rather than
+    their account id — so the expression that the user sees is not the expression that Jira accepts. This function
+    translates the former into the latter.
+
+    Args:
+        text: a JQL expression as typed by the user.
+        aliases: maps a `(field, readable value)` pair to the value to send to the API. A value that is not in the
+            mapping is left untouched, so an expression that does not use any alias is returned unchanged.
+
+    Returns:
+        The expression with every known alias replaced.
+    """
+
+    if not text or not aliases:
+        return text
+
+    field: str | None = None
+    replacements: list[tuple[int, int, str]] = []
+    for token in tokenize(text):
+        if token.kind is JQLTokenKind.FIELD:
+            field = token.value
+        elif token.kind is JQLTokenKind.KEYWORD:
+            # the clause is over; the values that follow belong to another field
+            field = None
+        elif token.kind is JQLTokenKind.VALUE and field is not None:
+            if (resolved := aliases.get((field.lower(), token.value))) is not None:
+                replacements.append((token.start, token.end, quote_if_needed(resolved)))
+
+    # applied back to front so that a replacement does not shift the offsets of the ones not yet applied
+    for start, end, replacement in reversed(replacements):
+        text = f'{text[:start]}{replacement}{text[end:]}'
+    return text

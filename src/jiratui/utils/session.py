@@ -1,13 +1,24 @@
 from contextvars import ContextVar
 from typing import Any
 
+_SESSION: dict[str, Any] = {}
+"""The data of the session.
+
+```{important}
+This is one dictionary for the whole app, and the widgets rely on that: a value cached by a worker — e.g. the JQL
+reference data — has to be visible to the widget that reads it later. The dictionary is only ever mutated in place;
+rebinding `ContextVar` here would hand a private copy of the session to whichever task happened to touch it first, and
+that task's writes would be lost to everybody else.
+```
+"""
+
 
 class ApplicationSession:
-    """Session storage using Python's contextvars for async-safe isolation.
+    """Session storage shared by the whole app.
 
     Example:
     # create the session object
-    session = ContextualSession()
+    session = ApplicationSession()
     # set a variable
     session.some_variable = 42
     # if you know the variable has been set you can retrieve its value using
@@ -23,15 +34,11 @@ class ApplicationSession:
     session.clear()
     """
 
-    _session_var: ContextVar[dict[str, Any]] = ContextVar('application_session', default=None)
+    _session_var: ContextVar[dict[str, Any]] = ContextVar('application_session', default=_SESSION)
 
     @classmethod
     def _get_session(cls) -> dict[str, Any]:
-        session = cls._session_var.get()
-        if session is None:
-            session = {}
-            cls._session_var.set(session)
-        return session
+        return cls._session_var.get()
 
     def __setattr__(self, name: str, value):
         if name.startswith('_'):

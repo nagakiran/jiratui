@@ -14,8 +14,13 @@ from jiratui.models import (
     WorkItemsSearchOrderBy,
 )
 from jiratui.utils.columns import DEFAULT_COLUMNS
+from jiratui.utils.jql import quote_if_needed
 from jiratui.utils.session import ApplicationSession
-from jiratui.widgets.commons.jql_autocomplete import quote_if_needed
+from jiratui.widgets.commons.jql_autocomplete import (
+    VALUE_QUERY_DEBOUNCE_SECONDS,
+    JQLInputAutoComplete,
+    jql_value_aliases,
+)
 from jiratui.widgets.screens.jql import JQLEditorScreen
 
 REFERENCE_DATA = JQLAutocompleteData(
@@ -108,7 +113,8 @@ async def open_editor(app, pilot, text: str, cursor: tuple[int, int] | None = No
     editor.text = text
     editor.move_cursor(cursor if cursor else (0, len(text)))
     await pilot.pause()
-    await pilot.pause()
+    # the values of a field are only fetched once the user stops typing
+    await pilot.pause(VALUE_QUERY_DEBOUNCE_SECONDS + 0.1)
     return screen, editor, screen.autocomplete
 
 
@@ -186,9 +192,11 @@ async def test_the_values_of_a_field_are_fetched_from_the_api(
 
 
 @pytest.mark.asyncio
-async def test_applying_a_value_inserts_the_value_and_not_the_display_name(
+async def test_applying_a_value_inserts_the_display_name_and_records_its_alias(
     app, reference_data_mock, suggestions_mock
 ):
+    # the expression shows the value the way the user recognises it; `resolve_values` puts back the value that the
+    # API issued when the search runs
     with (
         patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
         patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
@@ -202,7 +210,14 @@ async def test_applying_a_value_inserts_the_value_and_not_the_display_name(
             )
             await pilot.pause()
             # THEN
-            assert editor.text == '"Dev Engineers" in (nagakiran@juniper.net'
+            assert editor.text == '"Dev Engineers" in ("Naga Kiran K - nagakiran@juniper.net"'
+            assert jql_value_aliases() == {
+                ('dev engineers', 'Naga Kiran K - nagakiran@juniper.net'): 'nagakiran@juniper.net',
+                (
+                    'dev engineers',
+                    'Hegde, Nagaraja - hnagaraja@juniper.net',
+                ): 'hnagaraja@juniper.net',
+            }
 
 
 @pytest.mark.asyncio
@@ -332,3 +347,137 @@ async def test_the_target_state_of_a_multiline_expression(
             assert state.text == 'project = SB\nand assi'
             # 'project = SB' is 12 characters, so the second row starts at 13 and the cursor at (1, 8) is at 21
             assert state.cursor_position == 21
+
+
+@pytest.mark.asyncio
+async def test_enter_with_the_dropdown_open_applies_the_suggestion_and_inserts_no_newline(
+    app, reference_data_mock, suggestions_mock
+):
+    # a TextArea inserts the newline from its own key handler, before the dropdown is told about the key
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            _, editor, autocomplete = await open_editor(app, pilot, 'pro')
+            assert autocomplete.display is True
+            # WHEN
+            await pilot.press('enter')
+            await pilot.pause()
+            # THEN
+            assert editor.text == 'project '
+            assert '\n' not in editor.text
+
+
+@pytest.mark.asyncio
+async def test_tab_with_the_dropdown_open_applies_the_suggestion_and_inserts_no_indent(
+    app, reference_data_mock, suggestions_mock
+):
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            _, editor, autocomplete = await open_editor(app, pilot, 'pro')
+            assert autocomplete.display is True
+            # WHEN
+            await pilot.press('tab')
+            await pilot.pause()
+            # THEN
+            assert editor.text == 'project '
+
+
+@pytest.mark.asyncio
+async def test_enter_with_the_dropdown_closed_inserts_a_newline(
+    app, reference_data_mock, suggestions_mock
+):
+    # the editor is still an editor: the key is only claimed while the dropdown is open
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            _, editor, autocomplete = await open_editor(app, pilot, 'project = SB ')
+            assert autocomplete.display is False
+            # WHEN
+            await pilot.press('enter')
+            await pilot.pause()
+            # THEN
+            assert editor.text == 'project = SB \n'
+
+
+@pytest.mark.asyncio
+async def test_the_values_of_a_field_are_fetched_once_the_user_stops_typing(
+    app, reference_data_mock, suggestions_mock
+):
+    # without the debounce every keystroke sends a query, and the responses arrive while the user is still typing
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            _, editor, autocomplete = await open_editor(app, pilot, '"Dev Engineers" in (n')
+            suggestions_mock.reset_mock()
+            # WHEN the user types the rest of the name without stopping
+            for text in (
+                '"Dev Engineers" in (na',
+                '"Dev Engineers" in (nag',
+                '"Dev Engineers" in (naga',
+            ):
+                editor.text = text
+                editor.move_cursor((0, len(text)))
+                await pilot.pause()
+            # THEN nothing has been asked for yet
+            suggestions_mock.assert_not_awaited()
+            # WHEN the user stops typing
+            await pilot.pause(VALUE_QUERY_DEBOUNCE_SECONDS + 0.1)
+            # THEN only the last prefix is queried
+            assert suggestions_mock.await_count == 1
+            assert suggestions_mock.await_args.kwargs == {
+                'field_name': 'Dev Engineers',
+                'field_value': 'naga',
+            }
+
+
+@pytest.mark.asyncio
+async def test_a_single_character_does_not_query_the_values_of_a_field(
+    app, reference_data_mock, suggestions_mock
+):
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            await open_editor(app, pilot, '"Dev Engineers" in (n')
+            suggestions_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_dropdown_of_the_search_bar_is_not_cut_off_by_the_edge_of_the_screen(
+    app, reference_data_mock, suggestions_mock
+):
+    # the JQL input sits on the right of the search bar, so a dropdown aligned to the cursor runs past the edge of
+    # the screen unless it is pushed back; when it is not, the end of every suggestion is cut off
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test(size=(100, 40)) as pilot:
+            await pilot.pause()
+            jql_input = app.screen.query_one('#input_search_term')
+            autocomplete = app.screen.query_one(JQLInputAutoComplete)
+            jql_input.focus()
+            await pilot.pause()
+            jql_input.value = '"Dev Engineers" in (naga'
+            jql_input.cursor_position = len(jql_input.value)
+            await pilot.pause()
+            await pilot.pause(VALUE_QUERY_DEBOUNCE_SECONDS + 0.1)
+            await pilot.pause()
+            # GIVEN the dropdown is showing a suggestion wider than the room left of the screen edge
+            assert autocomplete.display is True
+            region = autocomplete.option_list.region
+            assert region.width >= len('Naga Kiran K - nagakiran@juniper.net')
+            # THEN it still fits on the screen
+            screen_width = app.screen.scrollable_content_region.width
+            assert region.x >= 0
+            assert region.x + region.width <= screen_width

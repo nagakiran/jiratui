@@ -2,10 +2,12 @@ from collections import defaultdict
 import dataclasses
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+import html
 import logging
 import mimetypes
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 from dateutil.parser import isoparse  # type:ignore[import-untyped]
@@ -68,6 +70,28 @@ from jiratui.models import (
     WorkItemsSearchOrderBy,
 )
 from jiratui.utils.adf import convert_markdown_to_adf
+
+HTML_TAG_PATTERN = re.compile(r'<[^>]+>')
+"""Matches the tags that Jira uses to highlight the text that matches a query."""
+
+
+def strip_html_markup(value: str | None) -> str | None:
+    """Removes the HTML markup that Jira adds to a piece of text meant to be displayed to the user.
+
+    The API highlights the fragment of a suggestion that matches the text typed by the user by wrapping it in a
+    `<b>` tag. The app renders the suggestions as plain text, and applies its own highlight, so the markup has to
+    go; otherwise the tags show up verbatim in the dropdown.
+
+    Args:
+        value: the text to clean up.
+
+    Returns:
+        The text without HTML tags and with the HTML entities resolved.
+    """
+
+    if not value:
+        return value
+    return html.unescape(HTML_TAG_PATTERN.sub('', value))
 
 
 @dataclass
@@ -2935,7 +2959,8 @@ class APIController:
         for suggestion in response.get('results', []):
             suggestions.append(
                 JQLAutocompleteSuggestion(
-                    value=suggestion.get('value'), display_name=suggestion.get('displayName')
+                    value=suggestion.get('value'),
+                    display_name=strip_html_markup(suggestion.get('displayName')),
                 )
             )
         return APIControllerResponse(result=suggestions)

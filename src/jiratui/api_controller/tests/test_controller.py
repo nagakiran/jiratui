@@ -5197,3 +5197,72 @@ async def test_get_jql_autocomplete_data_with_api_error(
     assert response.success is False
     assert response.error == 'some error'
     assert response.result is None
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'get_jql_autocomplete_suggestions')
+async def test_get_jql_autocomplete_suggestions_strips_the_html_of_the_display_name(
+    get_jql_autocomplete_suggestions_mock: Mock, jira_api_controller: APIController
+):
+    # the API highlights the text that matches the query by wrapping it in a `<b>` tag; the app renders the
+    # suggestions as plain text, so the tags would show up verbatim in the dropdown
+    # GIVEN
+    get_jql_autocomplete_suggestions_mock.return_value = {
+        'results': [
+            {'value': 'nagakiran@juniper.net', 'displayName': '<b>Naga</b> Kiran K'},
+            {'value': 'AT&amp;T', 'displayName': 'AT&amp;T <b>Inc</b>'},
+        ]
+    }
+    # WHEN
+    response = await jira_api_controller.get_jql_autocomplete_suggestions(
+        field_name='Dev Engineers', field_value='naga'
+    )
+    # THEN
+    assert [(item.value, item.display_name) for item in response.result] == [
+        ('nagakiran@juniper.net', 'Naga Kiran K'),
+        ('AT&amp;T', 'AT&T Inc'),
+    ]
+    get_jql_autocomplete_suggestions_mock.assert_called_once_with(
+        'Dev Engineers', 'naga', None, None
+    )
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'get_jql_autocomplete_suggestions')
+async def test_get_jql_autocomplete_suggestions_without_a_display_name(
+    get_jql_autocomplete_suggestions_mock: Mock, jira_api_controller: APIController
+):
+    # GIVEN
+    get_jql_autocomplete_suggestions_mock.return_value = {'results': [{'value': 'SB'}]}
+    # WHEN
+    response = await jira_api_controller.get_jql_autocomplete_suggestions(field_name='project')
+    # THEN
+    assert [(item.value, item.display_name) for item in response.result] == [('SB', None)]
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'get_jql_autocomplete_suggestions')
+async def test_get_jql_autocomplete_suggestions_with_an_invalid_response(
+    get_jql_autocomplete_suggestions_mock: Mock, jira_api_controller: APIController
+):
+    # GIVEN
+    get_jql_autocomplete_suggestions_mock.return_value = None
+    # WHEN
+    response = await jira_api_controller.get_jql_autocomplete_suggestions(field_name='project')
+    # THEN
+    assert response.success is False
+    assert response.error == 'Invalid response from JQL autocomplete suggestions API'
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'get_jql_autocomplete_suggestions')
+async def test_get_jql_autocomplete_suggestions_with_api_error(
+    get_jql_autocomplete_suggestions_mock: Mock, jira_api_controller: APIController
+):
+    # GIVEN
+    get_jql_autocomplete_suggestions_mock.side_effect = ValueError('some error')
+    # WHEN
+    response = await jira_api_controller.get_jql_autocomplete_suggestions(field_name='project')
+    # THEN
+    assert response.success is False
+    assert response.error == 'some error'

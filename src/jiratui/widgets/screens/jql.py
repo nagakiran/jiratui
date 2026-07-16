@@ -10,7 +10,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Select, TextArea
 
 from jiratui.config import CONFIGURATION
-from jiratui.widgets.commons.jql_autocomplete import JQLTextAreaAutoComplete
+from jiratui.widgets.commons.jql_autocomplete import JQLTextArea, JQLTextAreaAutoComplete
 
 
 class PreDefinedJQLExpressionsWidget(Select):
@@ -73,13 +73,17 @@ class JQLEditorScreen(ModalScreen[str]):
             yield PreDefinedJQLExpressionsWidget(
                 [(item.get('label'), key) for key, item in self.expressions]
             )
-            editor = TextArea.code_editor(
-                self.content,
-                language='sql',
-                id='jql-editor',
-                classes='jql-expression-editor',
-                show_line_numbers=False,
-                theme='css',
+            # `code_editor` is declared to return a `TextArea`, but it instantiates the class it is called on
+            editor = cast(
+                JQLTextArea,
+                JQLTextArea.code_editor(
+                    self.content,
+                    language='sql',
+                    id='jql-editor',
+                    classes='jql-expression-editor',
+                    show_line_numbers=False,
+                    theme='css',
+                ),
             )
             yield editor
             yield JQLTextAreaAutoComplete(

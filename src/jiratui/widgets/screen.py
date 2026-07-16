@@ -31,11 +31,12 @@ from jiratui.utils.columns import (
     resolve_columns,
 )
 from jiratui.utils.history import HistoryEntry, HistoryManager
+from jiratui.utils.jql import resolve_values
 from jiratui.utils.session import ApplicationSession
 from jiratui.utils.urls import build_external_url_for_issue
 from jiratui.widgets.attachments.attachments import IssueAttachmentsWidget, WorkItemAttachments
 from jiratui.widgets.comments.comments import IssueCommentsWidget, WorkItemComments
-from jiratui.widgets.commons.jql_autocomplete import JQLInputAutoComplete
+from jiratui.widgets.commons.jql_autocomplete import JQLInputAutoComplete, jql_value_aliases
 from jiratui.widgets.commons.users import JiraUserInput, UsersAutoComplete
 from jiratui.widgets.create_work_item.screen import AddWorkItemScreen
 from jiratui.widgets.filters import (
@@ -987,7 +988,8 @@ class MainScreen(Screen):
                 return f'text ~ "{search_term}"'
             return f'summary ~ "{search_term}" OR description ~ "{search_term}"'
         elif jql_expression:
-            return jql_expression
+            # the expression shows the values the way the user recognises them; the API needs the values it issued
+            return resolve_values(jql_expression, jql_value_aliases())
         return None
 
     async def _search_single_issue(self, issue_key: str) -> WorkItemSearchResult:
