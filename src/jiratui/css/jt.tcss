@@ -1495,3 +1495,30 @@ TransitionScreen > Vertical {
     align: center middle;
     height: auto;
 }
+
+/*
+================================================================================
+ColumnSelectionScreen
+================================================================================
+*/
+ColumnSelectionScreen {
+    align: center middle;
+    background: $background 80%;
+}
+
+#column-selection-container {
+    width: 60%;
+    height: auto;
+    max-height: 80%;
+    border: round $foreground;
+    padding: 0 1;
+}
+
+#column-selection-filter {
+    margin-bottom: 1;
+}
+
+#column-selection-list {
+    height: auto;
+    max-height: 20;
+}

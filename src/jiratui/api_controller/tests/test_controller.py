@@ -31,6 +31,8 @@ from jiratui.models import (
     JiraUser,
     JiraUserGroup,
     JiraWorklog,
+    JQLAutocompleteData,
+    JQLFieldRef,
     LinkIssueType,
     PaginatedJiraWorklog,
     Project,
@@ -5065,3 +5067,133 @@ async def test_issue_picker_with_error(issue_picker_mock: Mock, jira_api_control
         show_sub_tasks=True,
         current_issue_key=None,
     )
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'get_jql_autocomplete_data')
+async def test_get_jql_autocomplete_data(
+    get_jql_autocomplete_data_mock: Mock, jira_api_controller: APIController
+):
+    # GIVEN
+    get_jql_autocomplete_data_mock.return_value = {
+        'visibleFieldNames': [
+            {
+                'value': 'assignee',
+                'displayName': 'assignee',
+                'orderable': True,
+                'searchable': True,
+                'operators': ['=', '!=', 'in'],
+                'types': ['com.atlassian.jira.user.ApplicationUser'],
+            },
+            {
+                'value': 'cf[10343]',
+                'displayName': 'Dev Engineers - Dev Engineers',
+                'orderable': True,
+                'searchable': True,
+                'cfid': 'customfield_10343',
+                'operators': ['=', '!='],
+                'types': ['com.atlassian.jira.user.ApplicationUser'],
+            },
+        ],
+        'visibleFunctionNames': [
+            {'value': 'currentUser()', 'displayName': 'currentUser()', 'types': ['a']}
+        ],
+        'jqlReservedWords': ['and', 'or'],
+    }
+    # WHEN
+    response = await jira_api_controller.get_jql_autocomplete_data()
+    # THEN
+    assert isinstance(response, APIControllerResponse)
+    assert response.success is True
+    assert response.result == JQLAutocompleteData(
+        visible_field_names=[
+            JQLFieldRef(
+                value='assignee',
+                display_name='assignee',
+                operators=['=', '!=', 'in'],
+                types=['com.atlassian.jira.user.ApplicationUser'],
+                orderable=True,
+                searchable=True,
+            ),
+            JQLFieldRef(
+                value='cf[10343]',
+                display_name='Dev Engineers - Dev Engineers',
+                operators=['=', '!='],
+                types=['com.atlassian.jira.user.ApplicationUser'],
+                orderable=True,
+                searchable=True,
+                cfid='customfield_10343',
+            ),
+        ],
+        visible_function_names=[
+            JQLFieldRef(value='currentUser()', display_name='currentUser()', types=['a'])
+        ],
+        jql_reserved_words=['and', 'or'],
+    )
+    get_jql_autocomplete_data_mock.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'get_jql_autocomplete_data')
+async def test_get_jql_autocomplete_data_coerces_boolean_strings(
+    get_jql_autocomplete_data_mock: Mock, jira_api_controller: APIController
+):
+    # some Jira Server/Data Center versions return the strings 'true'/'false' instead of booleans
+    # GIVEN
+    get_jql_autocomplete_data_mock.return_value = {
+        'visibleFieldNames': [
+            {'value': 'assignee', 'orderable': 'true', 'searchable': 'false'},
+            {'value': 'summary', 'orderable': 'false', 'searchable': 'true'},
+        ]
+    }
+    # WHEN
+    response = await jira_api_controller.get_jql_autocomplete_data()
+    # THEN
+    assert [
+        (field.value, field.orderable, field.searchable)
+        for field in response.result.visible_field_names
+    ] == [('assignee', True, False), ('summary', False, True)]
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'get_jql_autocomplete_data')
+async def test_get_jql_autocomplete_data_with_empty_response(
+    get_jql_autocomplete_data_mock: Mock, jira_api_controller: APIController
+):
+    # GIVEN
+    get_jql_autocomplete_data_mock.return_value = {}
+    # WHEN
+    response = await jira_api_controller.get_jql_autocomplete_data()
+    # THEN
+    assert response.success is False
+    assert response.error == 'Invalid response from JQL autocomplete data API'
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'get_jql_autocomplete_data')
+async def test_get_jql_autocomplete_data_ignores_entries_without_a_value(
+    get_jql_autocomplete_data_mock: Mock, jira_api_controller: APIController
+):
+    # GIVEN
+    get_jql_autocomplete_data_mock.return_value = {
+        'visibleFieldNames': [{'displayName': 'no value'}, 'not-an-object', {'value': 'summary'}],
+    }
+    # WHEN
+    response = await jira_api_controller.get_jql_autocomplete_data()
+    # THEN
+    assert [field.value for field in response.result.visible_field_names] == ['summary']
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'get_jql_autocomplete_data')
+async def test_get_jql_autocomplete_data_with_api_error(
+    get_jql_autocomplete_data_mock: Mock, jira_api_controller: APIController
+):
+    # GIVEN
+    get_jql_autocomplete_data_mock.side_effect = ValueError('some error')
+    # WHEN
+    response = await jira_api_controller.get_jql_autocomplete_data()
+    # THEN
+    assert response.success is False
+    assert response.error == 'some error'
+    assert response.result is None

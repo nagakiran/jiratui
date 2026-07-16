@@ -4,11 +4,13 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.css.query import NoMatches
 from textual.events import Key
 from textual.screen import ModalScreen
 from textual.widgets import Select, TextArea
 
 from jiratui.config import CONFIGURATION
+from jiratui.widgets.commons.jql_autocomplete import JQLTextAreaAutoComplete
 
 
 class PreDefinedJQLExpressionsWidget(Select):
@@ -71,16 +73,36 @@ class JQLEditorScreen(ModalScreen[str]):
             yield PreDefinedJQLExpressionsWidget(
                 [(item.get('label'), key) for key, item in self.expressions]
             )
-            yield TextArea.code_editor(
+            editor = TextArea.code_editor(
                 self.content,
                 language='sql',
+                id='jql-editor',
                 classes='jql-expression-editor',
                 show_line_numbers=False,
                 theme='css',
             )
+            yield editor
+            yield JQLTextAreaAutoComplete(
+                target=editor,
+                api_controller=cast('JiraApp', self.app).api,  # type:ignore[name-defined] # noqa: F821
+            )
+
+    @property
+    def autocomplete(self) -> JQLTextAreaAutoComplete:
+        return self.query_one(JQLTextAreaAutoComplete)
+
+    @property
+    def _autocomplete_is_open(self) -> bool:
+        try:
+            return bool(self.autocomplete.display)
+        except NoMatches:
+            return False
 
     def on_key(self, event: Key):
         if event.key == 'escape':
+            if self._autocomplete_is_open:
+                # the dropdown is open: escape closes the dropdown, not the editor
+                return
             self.dismiss_with_current_text()
 
     def dismiss_with_current_text(self) -> None:

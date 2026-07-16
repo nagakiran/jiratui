@@ -13,7 +13,7 @@ from jiratui.api.utils import build_issue_search_jql
 from jiratui.config import ApplicationConfiguration
 from jiratui.constants import ISSUE_SEARCH_DEFAULT_MAX_RESULTS, LOGGER_NAME
 from jiratui.exceptions import FileUploadException
-from jiratui.models import WorkItemsSearchOrderBy
+from jiratui.models import SortSpec, WorkItemsSearchOrderBy
 
 
 class JiraAPI:
@@ -470,7 +470,7 @@ class JiraAPI:
         next_page_token: str | None = None,
         offset: int | None = None,
         limit: int | None = None,
-        order_by: WorkItemsSearchOrderBy | None = None,
+        order_by: WorkItemsSearchOrderBy | SortSpec | None = None,
     ) -> dict:
         """Searches for issues using JQL. Recent updates might not be immediately visible in the returned search
         results.
@@ -1439,6 +1439,25 @@ class JiraAPI:
 
         return await self._client.make_request(method=httpx.AsyncClient.get, url='field')
 
+    async def get_jql_autocomplete_data(self) -> dict:
+        """Retrieves the reference data required to autocomplete JQL expressions.
+
+        This returns the fields, functions and reserved words that the user can reference in a JQL expression. Unlike
+        [get_jql_autocomplete_suggestions](#jiratui.api.api.JiraAPI.get_jql_autocomplete_suggestions), which returns the
+        *values* of a single field, this data is static for the duration of a session and should be cached by the
+        caller.
+
+        **See Also**:
+        - [api-rest-api-3-jql-autocompletedata-get](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-jql/#api-rest-api-3-jql-autocompletedata-get)
+
+        Returns:
+            A dictionary with the `visibleFieldNames`, `visibleFunctionNames` and `jqlReservedWords` keys.
+        """
+
+        return await self._client.make_request(
+            method=httpx.AsyncClient.get, url='jql/autocompletedata'
+        )
+
     async def get_jql_autocomplete_suggestions(
         self,
         field_name: str | None = None,
@@ -1549,7 +1568,7 @@ class JiraDataCenterAPI(JiraAPI):
         next_page_token: str | None = None,
         offset: int | None = None,
         limit: int | None = None,
-        order_by: WorkItemsSearchOrderBy | None = None,
+        order_by: WorkItemsSearchOrderBy | SortSpec | None = None,
     ) -> dict:
         """Searches for issues using JQL. Recent updates might not be immediately visible in the returned search
         results.

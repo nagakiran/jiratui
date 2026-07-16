@@ -1,0 +1,316 @@
+"""This module provides the registry of columns that the search results table can display.
+
+A column is described by a `ColumnSpec`. The registry knows about the fields modelled by `JiraIssue` (the built-in
+columns) and can synthesize a spec for any other field known to the Jira instance, including custom fields.
+
+```{important}
+`ColumnSpec.api_fields` is what makes a column work: a column renders an empty value unless the fields it needs are
+requested from the API when the work items are searched. Use `api_fields_for` to build the list of fields to request.
+```
+"""
+
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from jiratui.models import JiraField, JiraIssue
+
+INDEX_COLUMN_ID = 'index'
+"""The id of the column that displays the position of a work item within the current page of results."""
+
+SUMMARY_COLUMN_ID = 'summary'
+"""The id of the column that displays the summary of a work item. This column absorbs the remaining width."""
+
+STATUS_COLUMN_ID = 'status'
+WORK_ITEM_TYPE_COLUMN_ID = 'issuetype'
+
+BASELINE_API_FIELDS = ('id', 'key', 'status', 'summary', 'issuetype', 'parent')
+"""The fields that are always requested from the API.
+
+The table dereferences the status and the type of every work item, and the key of the row is built from the id and the
+key of the work item; so these are requested even when no column displays them.
+"""
+
+DEFAULT_CUSTOM_COLUMN_WIDTH = 20
+"""The nominal width assumed for a column that displays a field that is not known to the registry."""
+
+
+@dataclass(frozen=True)
+class ColumnSpec:
+    """Describes a column of the search results table."""
+
+    id: str
+    """The id of the column. For a field that is not built-in this is the id of the Jira field."""
+    label: str
+    """The name of the column, as displayed in the header of the table."""
+    api_fields: tuple[str, ...] = ()
+    """The fields to request from the API in order to render the column."""
+    width: int = DEFAULT_CUSTOM_COLUMN_WIDTH
+    """The nominal width of the column. Used to work out the width left for the summary column."""
+    getter: Callable[['JiraIssue'], Any] | None = None
+    """Extracts the value of the column from a work item. If this is `None` the value is extracted from the raw
+    fields of the work item and rendered generically."""
+    sortable_jql_field: str | None = None
+    """The name to use in an `ORDER BY` clause to sort by this column. `None` if the column cannot be sorted."""
+
+
+BUILTIN_COLUMNS: dict[str, ColumnSpec] = {
+    INDEX_COLUMN_ID: ColumnSpec(id=INDEX_COLUMN_ID, label='#', width=4),
+    'key': ColumnSpec(
+        id='key',
+        label='Key',
+        api_fields=('key',),
+        width=12,
+        getter=lambda issue: issue.key,
+        sortable_jql_field='key',
+    ),
+    'parent': ColumnSpec(
+        id='parent',
+        label='Parent',
+        api_fields=('parent',),
+        width=10,
+        getter=lambda issue: issue.parent_key,
+        sortable_jql_field='parent',
+    ),
+    STATUS_COLUMN_ID: ColumnSpec(
+        id=STATUS_COLUMN_ID,
+        label='Status',
+        api_fields=('status',),
+        width=8,
+        getter=lambda issue: issue.status_name,
+        sortable_jql_field='status',
+    ),
+    WORK_ITEM_TYPE_COLUMN_ID: ColumnSpec(
+        id=WORK_ITEM_TYPE_COLUMN_ID,
+        label='Type',
+        api_fields=('issuetype',),
+        width=8,
+        getter=lambda issue: issue.work_item_type_name,
+        sortable_jql_field='issuetype',
+    ),
+    SUMMARY_COLUMN_ID: ColumnSpec(
+        id=SUMMARY_COLUMN_ID,
+        label='Summary',
+        api_fields=('summary',),
+        width=0,
+        getter=lambda issue: issue.cleaned_summary(),
+        sortable_jql_field='summary',
+    ),
+    'assignee': ColumnSpec(
+        id='assignee',
+        label='Assignee',
+        api_fields=('assignee',),
+        width=22,
+        getter=lambda issue: issue.display_assignee(),
+        sortable_jql_field='assignee',
+    ),
+    'reporter': ColumnSpec(
+        id='reporter',
+        label='Reporter',
+        api_fields=('reporter',),
+        width=22,
+        getter=lambda issue: issue.display_reporter(),
+        sortable_jql_field='reporter',
+    ),
+    'priority': ColumnSpec(
+        id='priority',
+        label='Priority',
+        api_fields=('priority',),
+        width=10,
+        getter=lambda issue: issue.priority_name,
+        sortable_jql_field='priority',
+    ),
+    'created': ColumnSpec(
+        id='created',
+        label='Created',
+        api_fields=('created',),
+        width=17,
+        getter=lambda issue: issue.created_on,
+        sortable_jql_field='created',
+    ),
+    'updated': ColumnSpec(
+        id='updated',
+        label='Updated',
+        api_fields=('updated',),
+        width=17,
+        getter=lambda issue: issue.updated_on,
+        sortable_jql_field='updated',
+    ),
+    'resolutiondate': ColumnSpec(
+        id='resolutiondate',
+        label='Resolved',
+        api_fields=('resolutiondate',),
+        width=17,
+        getter=lambda issue: issue.resolved_on,
+        sortable_jql_field='resolutiondate',
+    ),
+    'duedate': ColumnSpec(
+        id='duedate',
+        label='Due',
+        api_fields=('duedate',),
+        width=12,
+        getter=lambda issue: issue.display_due_date,
+        sortable_jql_field='duedate',
+    ),
+    'labels': ColumnSpec(
+        id='labels',
+        label='Labels',
+        api_fields=('labels',),
+        width=20,
+        getter=lambda issue: ', '.join(issue.labels or []),
+        sortable_jql_field='labels',
+    ),
+    'components': ColumnSpec(
+        id='components',
+        label='Components',
+        api_fields=('components',),
+        width=20,
+        getter=lambda issue: ', '.join(
+            component.name for component in issue.components or [] if component.name
+        ),
+        sortable_jql_field='component',
+    ),
+    'sprint': ColumnSpec(
+        id='sprint',
+        label='Sprint',
+        api_fields=(),
+        width=18,
+        getter=lambda issue: issue.sprint_name,
+        sortable_jql_field='sprint',
+    ),
+}
+"""The columns that display a field modelled by `JiraIssue`."""
+
+DEFAULT_COLUMNS: tuple[str, ...] = (
+    INDEX_COLUMN_ID,
+    'key',
+    'parent',
+    STATUS_COLUMN_ID,
+    WORK_ITEM_TYPE_COLUMN_ID,
+    SUMMARY_COLUMN_ID,
+)
+"""The columns displayed when the configuration does not specify any."""
+
+
+def column_ids_from_config(config: Any) -> list[str]:
+    """Extracts the ids of the columns to display from the configuration.
+
+    Args:
+        config: an instance of `ApplicationConfiguration`.
+
+    Returns:
+        The ids of the columns configured by the user; or the ids of the default columns when the configuration does
+        not define usable values.
+    """
+
+    ids = getattr(config, 'search_results_columns', None)
+    if not isinstance(ids, (list, tuple)):
+        return list(DEFAULT_COLUMNS)
+    valid = [column_id for column_id in ids if isinstance(column_id, str) and column_id]
+    return valid or list(DEFAULT_COLUMNS)
+
+
+def resolve_columns(
+    ids: Sequence[str],
+    jira_fields: Sequence['JiraField'] | None = None,
+    widths: dict[str, int] | None = None,
+) -> list[ColumnSpec]:
+    """Builds the specs of the columns to display.
+
+    Args:
+        ids: the ids of the columns, in the order in which they should be displayed. An id that is not a built-in
+        column is assumed to be the id of a Jira field.
+        jira_fields: the fields known to the Jira instance. Used to label the columns that display a field that is not
+        built-in. When a field is unknown the id of the field is used as the label.
+        widths: optional widths that override the nominal width of a column, keyed by the id of the column.
+
+    Returns:
+        A list of `ColumnSpec`. Ids that appear more than once are resolved once, keeping the first occurrence.
+    """
+
+    fields_by_id: dict[str, JiraField] = {}
+    for jira_field in jira_fields or []:
+        fields_by_id[jira_field.id] = jira_field
+        if jira_field.key:
+            fields_by_id.setdefault(jira_field.key, jira_field)
+
+    columns: list[ColumnSpec] = []
+    seen: set[str] = set()
+    for column_id in ids:
+        if not column_id or column_id in seen:
+            continue
+        seen.add(column_id)
+        if builtin := BUILTIN_COLUMNS.get(column_id):
+            columns.append(builtin)
+            continue
+        jira_field = fields_by_id.get(column_id)
+        columns.append(
+            ColumnSpec(
+                id=column_id,
+                label=jira_field.name if jira_field and jira_field.name else column_id,
+                api_fields=(column_id,),
+            )
+        )
+    if not columns:
+        columns = [BUILTIN_COLUMNS[column_id] for column_id in DEFAULT_COLUMNS]
+    if widths:
+        columns = [
+            replace(column, width=widths[column.id]) if column.id in widths else column
+            for column in columns
+        ]
+    return columns
+
+
+def api_fields_for(columns: Sequence[ColumnSpec]) -> list[str]:
+    """Builds the list of fields to request from the API in order to render a set of columns.
+
+    Args:
+        columns: the columns to display.
+
+    Returns:
+        A list of field ids. This always includes the baseline fields required by the table itself.
+    """
+
+    fields: list[str] = list(BASELINE_API_FIELDS)
+    for column in columns:
+        for api_field in column.api_fields:
+            if api_field not in fields:
+                fields.append(api_field)
+    return fields
+
+
+def fixed_width_of(columns: Sequence[ColumnSpec]) -> int:
+    """Calculates the width taken by the columns that do not absorb the remaining width of the table.
+
+    Args:
+        columns: the columns to display.
+
+    Returns:
+        The total nominal width of every column other than the summary column.
+    """
+
+    return sum(column.width for column in columns if column.id != SUMMARY_COLUMN_ID)
+
+
+def sortable_field_for(column: ColumnSpec, jql_fields: Sequence[Any] | None = None) -> str | None:
+    """Works out the name to use in an `ORDER BY` clause to sort by a column.
+
+    Args:
+        column: the column to sort by.
+        jql_fields: the fields that can be referenced in a JQL expression, as returned by
+        [get_jql_autocomplete_data](#jiratui.api_controller.controller.APIController.get_jql_autocomplete_data). Used to
+        work out whether a custom field can be sorted, and how to reference it.
+
+    Returns:
+        The name of the field to sort by, or `None` if the column cannot be sorted.
+    """
+
+    if column.sortable_jql_field:
+        return column.sortable_jql_field
+    for jql_field in jql_fields or []:
+        if jql_field.cfid and jql_field.cfid == column.id and jql_field.orderable:
+            return jql_field.value
+        if jql_field.value == column.id and jql_field.orderable:
+            return jql_field.value
+    return None

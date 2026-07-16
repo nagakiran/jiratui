@@ -18,6 +18,7 @@ from jiratui.constants import (
 )
 from jiratui.files import get_config_file
 from jiratui.models import BaseModel, WorkItemsSearchOrderBy
+from jiratui.utils.columns import DEFAULT_COLUMNS
 
 
 class SSLConfiguration(BaseModel):
@@ -161,6 +162,15 @@ class ApplicationConfiguration(BaseSettings):
     """If `True` (default) the status of a work item will be styled when it is displayed in the search results."""
     search_results_style_work_item_type: bool = True
     """If `True` (default) the type of a work item will be styled when it is displayed in the search results."""
+    search_results_columns: list[str] = Field(default_factory=lambda: list(DEFAULT_COLUMNS))
+    """The columns displayed in the search results table, in the order in which they are displayed. In addition to the
+    built-in columns (`index`, `key`, `parent`, `status`, `issuetype`, `summary`, `assignee`, `reporter`, `priority`,
+    `created`, `updated`, `resolutiondate`, `duedate`, `labels`, `components` and `sprint`) you can use the id of any
+    field of your Jira instance; including custom fields. E.g.: `customfield_10050`. Users can change the columns of the
+    current session using the column selection screen."""
+    search_results_column_widths: dict[str, int] | None = None
+    """Optional widths for the columns of the search results table, keyed by the id of the column. Only used to work
+    out how much width is left for the summary column; e.g.: `{'assignee': 30}`."""
     on_start_up_only_fetch_projects: bool = True
     """When this is `True` the application will only load the list of available projects at startup. The list
     of status codes, users and work items types will be loaded when the user selects a project. If this is False then

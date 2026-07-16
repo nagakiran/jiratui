@@ -88,6 +88,48 @@ class WorkItemsSearchOrderBy(enum.Enum):
         return [(item.value.title(), item.value) for item in cls]
 
 
+@dataclass(frozen=True)
+class SortSpec:
+    """The criteria used to sort the results of a search of work items.
+
+    Unlike [WorkItemsSearchOrderBy](#jiratui.models.WorkItemsSearchOrderBy), which offers a fixed set of choices, this
+    can sort by any field that Jira can order by; including custom fields, e.g. `cf[10050]`.
+    """
+
+    field: str
+    """The name to use in the `ORDER BY` clause. E.g.: `created`, `cf[10050]`."""
+    descending: bool = False
+    """If `True` the results are sorted in descending order."""
+
+    @property
+    def value(self) -> str:
+        """The `ORDER BY` clause of the JQL query.
+
+        This mirrors the `value` of `WorkItemsSearchOrderBy` so that both can be used to sort a search.
+        """
+
+        return f'{self.field} {"desc" if self.descending else "asc"}'
+
+    @classmethod
+    def from_order_by(cls, order_by: 'WorkItemsSearchOrderBy') -> 'SortSpec':
+        """Builds an instance from one of the pre-defined sorting criteria.
+
+        Args:
+            order_by: an instance of `WorkItemsSearchOrderBy`.
+
+        Returns:
+            An instance of `SortSpec` equivalent to the given criteria.
+        """
+
+        field, _, direction = order_by.value.partition(' ')
+        return cls(field=field, descending=direction.strip().lower() == 'desc')
+
+    def toggled(self) -> 'SortSpec':
+        """Returns the same criteria, sorting in the opposite direction."""
+
+        return SortSpec(field=self.field, descending=not self.descending)
+
+
 class CustomFieldTypes(enum.Enum):
     TEXTAREA = 'com.atlassian.jira.plugin.system.customfieldtypes:textarea'
 
@@ -390,6 +432,10 @@ class JiraIssue(JiraBaseIssue):
     components: list[JiraIssueComponent] | None = None
     """The list of [JiraIssueComponent](#jiratui.models.JiraIssueComponent) of the work item."""
     environment: str | None = None
+    raw_fields: dict[str, Any] | None = None
+    """The unprocessed `fields` of the work item, as returned by the API. This is what allows the search results table
+    to display any field of a work item; including custom fields that are not modelled by this class. Only the fields
+    requested from the API are present here."""
 
     def short_title(self) -> str:
         return f'{self.key.strip()} - {self.summary.strip()}'
@@ -921,3 +967,46 @@ class JiraField(BaseModel):
 class JQLAutocompleteSuggestion(BaseModel):
     value: str | None = None
     display_name: str | None = None
+
+
+@dataclass
+class JQLFieldRef(BaseModel):
+    """A field (or function) that can be referenced in a JQL expression.
+
+    **See Also**:
+    - [api-rest-api-3-jql-autocompletedata-get](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-jql/#api-rest-api-3-jql-autocompletedata-get)
+    """
+
+    value: str
+    """The name to use when referencing the field in a JQL expression."""
+    display_name: str | None = None
+    """The name of the field as displayed to the user."""
+    operators: list[str] = dataclasses.field(default_factory=list)
+    """The JQL operators that the field supports. E.g.: `=`, `!=`, `in`."""
+    types: list[str] = dataclasses.field(default_factory=list)
+    """The data types of the field."""
+    orderable: bool = False
+    """Whether the field can be used in an `ORDER BY` clause."""
+    searchable: bool = False
+    """Whether the field can be used in a `WHERE` clause."""
+    cfid: str | None = None
+    """The id of the field when it is a custom field. E.g.: `cf[10050]`."""
+
+
+@dataclass
+class JQLAutocompleteData(BaseModel):
+    """The reference data required to autocomplete JQL expressions.
+
+    This is the data that allows the application to suggest field names, operators and functions without hitting the
+    API on every keystroke. Only the *values* of a field require a call to the API.
+
+    **See Also**:
+    - [api-rest-api-3-jql-autocompletedata-get](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-jql/#api-rest-api-3-jql-autocompletedata-get)
+    """
+
+    visible_field_names: list[JQLFieldRef] = dataclasses.field(default_factory=list)
+    """The fields that the user can reference in a JQL expression."""
+    visible_function_names: list[JQLFieldRef] = dataclasses.field(default_factory=list)
+    """The functions that the user can reference in a JQL expression. E.g.: `currentUser()`."""
+    jql_reserved_words: list[str] = dataclasses.field(default_factory=list)
+    """The words that are reserved by JQL and cannot be used as field names."""

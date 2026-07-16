@@ -3868,3 +3868,47 @@ async def test_issue_picker_without_project_without_current_issue_key(jira_api: 
             }
         ]
     }
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_jql_autocomplete_data(jira_api: JiraAPI):
+    # GIVEN
+    payload = {
+        'visibleFieldNames': [{'value': 'assignee', 'orderable': True}],
+        'visibleFunctionNames': [{'value': 'currentUser()'}],
+        'jqlReservedWords': ['and'],
+    }
+    route = respx.get(get_url_pattern('jql/autocompletedata'))
+    route.mock(return_value=httpx.Response(200, json=payload))
+    # WHEN
+    response = await jira_api.get_jql_autocomplete_data()
+    # THEN
+    assert response == payload
+    assert route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize(
+    'api_class, expected_url',
+    [
+        pytest.param(JiraAPI, 'https://foo.bar/rest/api/3/jql/autocompletedata', id='cloud-v3'),
+        pytest.param(JiraAPIv2, 'https://foo.bar/rest/api/2/jql/autocompletedata', id='cloud-v2'),
+        pytest.param(
+            JiraDataCenterAPI, 'https://foo.bar/rest/api/2/jql/autocompletedata', id='data-center'
+        ),
+    ],
+)
+async def test_get_jql_autocomplete_data_is_available_in_every_api(
+    api_class, expected_url, config_for_testing
+):
+    # the endpoint is defined by JiraAPI and inherited by the Cloud v2 and the Data Center APIs
+    # GIVEN
+    api = api_class('https://foo.bar', 'foo', 'bar', config_for_testing)
+    route = respx.get(get_url_pattern('jql/autocompletedata'))
+    route.mock(return_value=httpx.Response(200, json={}))
+    # WHEN
+    await api.get_jql_autocomplete_data()
+    # THEN
+    assert str(route.calls.last.request.url) == expected_url

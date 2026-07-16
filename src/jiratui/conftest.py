@@ -23,6 +23,7 @@ from jiratui.models import (
     TimeTracking,
     WorkItemsSearchOrderBy,
 )
+from jiratui.utils.columns import DEFAULT_COLUMNS
 
 
 @pytest.fixture
@@ -55,6 +56,8 @@ def config_for_testing() -> ApplicationConfiguration:
         fetch_comments_on_delete=False,
         show_keybinding_hints=False,
         enable_goto=False,
+        search_results_columns=list(DEFAULT_COLUMNS),
+        search_results_column_widths=None,
     )
     return config_mock
 

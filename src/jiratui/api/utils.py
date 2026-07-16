@@ -1,6 +1,6 @@
 from datetime import date
 
-from jiratui.models import WorkItemsSearchOrderBy
+from jiratui.models import SortSpec, WorkItemsSearchOrderBy
 
 
 def parse_required_fields_from_meta(metadata: dict) -> list[str]:
@@ -31,7 +31,7 @@ def build_issue_search_jql(
     issue_type: int | None = None,
     jql_query: str | None = None,
     search_in_active_sprint: bool = False,
-    order_by: WorkItemsSearchOrderBy | None = None,
+    order_by: WorkItemsSearchOrderBy | SortSpec | None = None,
 ) -> str:
     """Builds a JQL query expression to search issues based on different criteria.
 

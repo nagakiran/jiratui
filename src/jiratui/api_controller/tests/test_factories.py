@@ -539,6 +539,7 @@ def test_build_issue_instance_with_more_details(configuration_mock: Mock, config
             'customfield_10036': None,
         },
         environment='some text',
+        raw_fields=work_item['fields'],
     )
 
 
@@ -754,6 +755,7 @@ def test_build_issue_instance_with_more_details_no_adf(
             'customfield_10021': None,
             'customfield_10036': None,
         },
+        raw_fields=work_item['fields'],
     )
     assert issue.get_custom_fields() == {
         'customfield_10001': None,

@@ -7,6 +7,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, ItemGrid, Vertical
+from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.reactive import Reactive, reactive
 from textual.screen import ModalScreen
@@ -15,7 +16,20 @@ from textual.widgets._data_table import RowDoesNotExist
 
 from jiratui.api_controller.controller import APIControllerResponse
 from jiratui.config import CONFIGURATION
-from jiratui.models import JiraIssue, JiraIssueSearchResponse
+from jiratui.models import JiraIssue, JiraIssueSearchResponse, SortSpec
+from jiratui.utils.column_values import render_field_value
+from jiratui.utils.columns import (
+    INDEX_COLUMN_ID,
+    STATUS_COLUMN_ID,
+    SUMMARY_COLUMN_ID,
+    WORK_ITEM_TYPE_COLUMN_ID,
+    ColumnSpec,
+    column_ids_from_config,
+    fixed_width_of,
+    resolve_columns,
+    sortable_field_for,
+)
+from jiratui.utils.session import ApplicationSession
 from jiratui.utils.styling import get_style_for_work_item_status, get_style_for_work_item_type
 from jiratui.utils.urls import build_external_url_for_issue
 from jiratui.widgets.messages import SearchWorkItem
@@ -206,6 +220,14 @@ class IssuesSearchResultsTable(DataTable):
             key_display='f6',
             tooltip='View related work items',
         ),
+        Binding(
+            key='s',
+            action='sort_by_column',
+            description='Sort',
+            show=True,
+            key_display='s',
+            tooltip='Sort the results by the current column',
+        ),
     ]
 
     SMALLEST_MAXIMUM_WIDTH_FOR_SUMMARY_COLUMN = 30
@@ -231,6 +253,13 @@ class IssuesSearchResultsTable(DataTable):
         self.current_work_item_key: str | None = None
         self.current_work_item_id: str | None = None
         self._initial_results_set: JiraIssueSearchResponse | None = None
+        self.sort_spec: SortSpec | None = None
+        """The criteria used to sort the results. This is set when the user sorts by a column, and it takes precedence
+        over the "Order By" widget. The rows are sorted by Jira, not by this table, so that the sorting applies to
+        every page of the results and not only to the page currently displayed."""
+        self.sort_column_id: str | None = None
+        """The id of the column that the results are sorted by. Kept so the header of the column can display the
+        direction of the sorting after the table is rebuilt."""
 
     def set_initial_results_set(self, data: JiraIssueSearchResponse | None = None):
         self._initial_results_set = data
@@ -250,12 +279,18 @@ class IssuesSearchResultsTable(DataTable):
         if response is None:
             return
 
+        # clearing the table moves the cursor back to the first column; the column that the user was on is restored
+        # once the rows are rebuilt, so that e.g. sorting by a column again reverses the sorting of that same column
+        previous_cursor_column = self.cursor_column
+
         # clear the existing data
         self.clear(columns=True)
 
+        columns = self.active_columns
+
         maximum_summary_column_width = max(
             self.SMALLEST_MAXIMUM_WIDTH_FOR_SUMMARY_COLUMN,
-            self.parent.container_size.width - 42,  # type:ignore[attr-defined]
+            self.parent.container_size.width - fixed_width_of(columns),  # type:ignore[attr-defined]
         )
 
         # update next search tokens
@@ -264,33 +299,142 @@ class IssuesSearchResultsTable(DataTable):
             self.token_by_page[self.page + 1] = response.next_page_token
 
         # set the columns
-        self.add_columns(*['#', 'Key', 'Parent', 'Status', 'Type', 'Summary'])
+        self.add_columns(*[self._build_header(column) for column in columns])
         # build the rows
         for index, issue in enumerate(response.issues):
-            issue_summary = issue.cleaned_summary(
-                CONFIGURATION.get().search_results_truncate_work_item_summary
-                or maximum_summary_column_width
-            )
-
-            style_status = ''
-            if CONFIGURATION.get().search_results_style_work_item_status:
-                style_status = get_style_for_work_item_status(issue.status.name.lower())
-
-            style_work_type = ''
-            if CONFIGURATION.get().search_results_style_work_item_type:
-                style_work_type = get_style_for_work_item_type(issue.issue_type.name.lower())
-
             self.add_row(
                 *[
-                    index + 1,
-                    issue.key,
-                    issue.parent_key,
-                    Text(issue.status.name, style=style_status),
-                    Text(issue.work_item_type_name, style=style_work_type),
-                    Text(issue_summary),
+                    self._build_cell(column, issue, index, maximum_summary_column_width)
+                    for column in columns
                 ],
                 key=f'{issue.id}#{issue.key}',
             )
+
+        if response.issues and previous_cursor_column:
+            self.cursor_coordinate = Coordinate(
+                self.cursor_coordinate.row, min(previous_cursor_column, len(columns) - 1)
+            )
+
+    @property
+    def active_columns(self) -> list[ColumnSpec]:
+        """The columns currently displayed by the table.
+
+        The columns are owned by the screen because they determine the fields that the screen requests from the API
+        when it searches for work items.
+        """
+
+        columns = getattr(self.screen, 'active_columns', None)
+        if not columns:
+            return resolve_columns(column_ids_from_config(CONFIGURATION.get()))
+        return columns
+
+    def _build_header(self, column: ColumnSpec) -> str:
+        """Builds the label of the header of a column.
+
+        The label of the column that the results are sorted by displays the direction of the sorting.
+
+        Args:
+            column: the column.
+
+        Returns:
+            The label to display in the header of the column.
+        """
+
+        if self.sort_spec and column.id == self.sort_column_id:
+            return f'{column.label} {"▼" if self.sort_spec.descending else "▲"}'
+        return column.label
+
+    def _build_cell(
+        self, column: ColumnSpec, issue: JiraIssue, index: int, maximum_summary_column_width: int
+    ):
+        """Builds the value of a cell of the table.
+
+        Args:
+            column: the column that the cell belongs to.
+            issue: the work item that the row of the cell displays.
+            index: the position of the work item within the current page of results.
+            maximum_summary_column_width: the width available for the summary of a work item.
+
+        Returns:
+            The value to display in the cell.
+        """
+
+        if column.id == INDEX_COLUMN_ID:
+            return index + 1
+        if column.id == SUMMARY_COLUMN_ID:
+            return Text(
+                issue.cleaned_summary(
+                    CONFIGURATION.get().search_results_truncate_work_item_summary
+                    or maximum_summary_column_width
+                )
+            )
+        if column.id == STATUS_COLUMN_ID:
+            style_status = ''
+            if CONFIGURATION.get().search_results_style_work_item_status:
+                style_status = get_style_for_work_item_status(issue.status.name.lower())
+            return Text(issue.status.name, style=style_status)
+        if column.id == WORK_ITEM_TYPE_COLUMN_ID:
+            style_work_type = ''
+            if CONFIGURATION.get().search_results_style_work_item_type:
+                style_work_type = get_style_for_work_item_type(issue.issue_type.name.lower())
+            return Text(issue.work_item_type_name, style=style_work_type)
+        if column.getter:
+            return Text(str(column.getter(issue) or ''))
+        # the column displays a field that is not modelled by JiraIssue; e.g.: a custom field
+        return Text(render_field_value((issue.raw_fields or {}).get(column.id)))
+
+    def _jql_fields(self) -> list:
+        return ApplicationSession().get('jql_fields') or []
+
+    def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
+        """Sorts the results by the column whose header the user clicked."""
+
+        event.stop()
+        self._sort_by_column_at(event.column_index)
+
+    def action_sort_by_column(self) -> None:
+        """Sorts the results by the column that the cursor is on.
+
+        Pressing this again on the same column reverses the direction of the sorting.
+        """
+
+        self._sort_by_column_at(self.cursor_column)
+
+    def _sort_by_column_at(self, column_index: int) -> None:
+        columns = self.active_columns
+        if column_index < 0 or column_index >= len(columns):
+            return
+        column = columns[column_index]
+        field = sortable_field_for(column, self._jql_fields())
+        if not field:
+            self.notify(
+                f'The results cannot be sorted by "{column.label}".',
+                title='Sort Results',
+                severity='warning',
+            )
+            return
+
+        if self.sort_column_id == column.id and self.sort_spec:
+            self.sort_spec = self.sort_spec.toggled()
+        else:
+            self.sort_spec = SortSpec(field=field)
+        self.sort_column_id = column.id
+        # the results are sorted by Jira, so the search needs to run again; the tokens of the pages of the results
+        # sorted by the previous criteria are no longer valid
+        self.page = 1
+        self.token_by_page = {}
+        screen = cast('MainScreen', self.screen)  # type:ignore[name-defined] # noqa: F821
+        self.run_worker(screen.action_search(), exclusive=True)
+
+    def clear_sorting(self) -> None:
+        """Stops sorting the results by a column.
+
+        This is used when the user chooses a different criteria using the "Order By" widget, which would otherwise
+        appear to have no effect.
+        """
+
+        self.sort_spec = None
+        self.sort_column_id = None
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Fetches the details of the currently-selected item."""

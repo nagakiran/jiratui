@@ -57,10 +57,13 @@ from jiratui.models import (
     JiraUserGroup,
     JiraWorkItemFields,
     JiraWorklog,
+    JQLAutocompleteData,
     JQLAutocompleteSuggestion,
+    JQLFieldRef,
     LinkIssueType,
     PaginatedJiraWorklog,
     Project,
+    SortSpec,
     UpdateWorkItemResponse,
     WorkItemsSearchOrderBy,
 )
@@ -934,7 +937,7 @@ class APIController:
         jql_query: str | None = None,
         next_page_token: str | None = None,
         limit: int | None = None,
-        order_by: WorkItemsSearchOrderBy | None = None,
+        order_by: WorkItemsSearchOrderBy | SortSpec | None = None,
         fields: list[str] | None = None,
     ) -> APIControllerResponse:
         """Searches for issues matching specified JQL query and other criteria.
@@ -1029,7 +1032,7 @@ class APIController:
         jql_query: str | None = None,
         page: int | None = None,
         limit: int | None = None,
-        order_by: WorkItemsSearchOrderBy | None = None,
+        order_by: WorkItemsSearchOrderBy | SortSpec | None = None,
         fields: list[str] | None = None,
     ) -> APIControllerResponse:
         """Searches for issues matching specified JQL query and other criteria.
@@ -2936,3 +2939,64 @@ class APIController:
                 )
             )
         return APIControllerResponse(result=suggestions)
+
+    @staticmethod
+    def _as_bool(value: Any) -> bool:
+        # some Jira Server/Data Center versions return the strings 'true'/'false' where the Cloud API returns booleans
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() == 'true'
+
+    @classmethod
+    def _build_jql_field_refs(cls, items: Any) -> list[JQLFieldRef]:
+        refs: list[JQLFieldRef] = []
+        if not isinstance(items, list):
+            return refs
+        for item in items:
+            if not isinstance(item, dict) or not (value := item.get('value')):
+                continue
+            refs.append(
+                JQLFieldRef(
+                    value=value,
+                    display_name=item.get('displayName'),
+                    operators=[str(operator) for operator in item.get('operators') or []],
+                    types=[str(field_type) for field_type in item.get('types') or []],
+                    orderable=cls._as_bool(item.get('orderable')),
+                    searchable=cls._as_bool(item.get('searchable')),
+                    cfid=item.get('cfid'),
+                )
+            )
+        return refs
+
+    async def get_jql_autocomplete_data(self) -> APIControllerResponse:
+        """Retrieves the reference data required to autocomplete JQL expressions.
+
+        This is the data used to suggest field names, operators and functions. It also tells us which fields can be
+        used in an `ORDER BY` clause.
+
+        Returns:
+            An instance of `APIControllerResponse` with a `JQLAutocompleteData` in `result` and `success = True`.
+            If an error occurs then `success = False` and the error message in the `error` key.
+        """
+
+        try:
+            response: Any | None = await self.api.get_jql_autocomplete_data()
+        except Exception as e:
+            exception_details: dict = self._extract_exception_details(e)
+            self.logger.error(
+                'Unable to get JQL autocomplete data', extra=exception_details.get('extra')
+            )
+            return APIControllerResponse(success=False, error=exception_details.get('message'))
+        if not response or not isinstance(response, dict):
+            return APIControllerResponse(
+                success=False, error='Invalid response from JQL autocomplete data API'
+            )
+        return APIControllerResponse(
+            result=JQLAutocompleteData(
+                visible_field_names=self._build_jql_field_refs(response.get('visibleFieldNames')),
+                visible_function_names=self._build_jql_field_refs(
+                    response.get('visibleFunctionNames')
+                ),
+                jql_reserved_words=[str(word) for word in response.get('jqlReservedWords') or []],
+            )
+        )

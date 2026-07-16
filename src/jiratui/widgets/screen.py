@@ -16,15 +16,26 @@ from jiratui.config import CONFIGURATION
 from jiratui.constants import FULL_TEXT_SEARCH_DEFAULT_MINIMUM_TERM_LENGTH, LOGGER_NAME
 from jiratui.models import (
     IssueType,
+    JiraField,
     JiraIssue,
     JiraIssueSearchResponse,
     JiraUser,
+    SortSpec,
     WorkItemsSearchOrderBy,
 )
+from jiratui.utils.columns import (
+    BUILTIN_COLUMNS,
+    ColumnSpec,
+    api_fields_for,
+    column_ids_from_config,
+    resolve_columns,
+)
 from jiratui.utils.history import HistoryEntry, HistoryManager
+from jiratui.utils.session import ApplicationSession
 from jiratui.utils.urls import build_external_url_for_issue
 from jiratui.widgets.attachments.attachments import IssueAttachmentsWidget, WorkItemAttachments
 from jiratui.widgets.comments.comments import IssueCommentsWidget, WorkItemComments
+from jiratui.widgets.commons.jql_autocomplete import JQLInputAutoComplete
 from jiratui.widgets.commons.users import JiraUserInput, UsersAutoComplete
 from jiratui.widgets.create_work_item.screen import AddWorkItemScreen
 from jiratui.widgets.filters import (
@@ -44,6 +55,7 @@ from jiratui.widgets.related_work_items.related_issues import (
     WorkItemRelatedItems,
 )
 from jiratui.widgets.remote_links.links import IssueRemoteLinksWidget
+from jiratui.widgets.screens.columns import ColumnSelectionScreen
 from jiratui.widgets.screens.git import GitScreen
 from jiratui.widgets.screens.history import HistoryScreen
 from jiratui.widgets.screens.text_search import TextSearchScreen
@@ -106,6 +118,14 @@ class MainScreen(Screen):
             action='search',
             description='Search',
             tooltip='Search items by search criteria',
+        ),
+        Binding(
+            key='f7',
+            action='configure_columns',
+            description='Columns',
+            show=True,
+            key_display='f7',
+            tooltip='Choose the columns of the search results',
         ),
         Binding(
             key='p',
@@ -284,6 +304,14 @@ class MainScreen(Screen):
         self.logger = logging.getLogger(LOGGER_NAME)
         self.current_loaded_work_item_key: str | None = None
         """Track the currently loaded work item key to prevent redundant reloads."""
+        self.active_columns: list[ColumnSpec] = resolve_columns(
+            column_ids_from_config(CONFIGURATION.get()),
+            widths=getattr(CONFIGURATION.get(), 'search_results_column_widths', None),
+        )
+        """The columns displayed by the search results table. The screen owns these because they determine the fields
+        that it requests from the API when it searches for work items. The columns that display a custom field are
+        re-resolved once the fields of the Jira instance are loaded, so they can be labelled with the name of the
+        field."""
         # maps keys to widget ids to enable quick navigation
         self.keys_widget_ids_mapping: dict[str, str] = {
             'p': '#jira-project-selector',
@@ -449,7 +477,9 @@ class MainScreen(Screen):
                     initial_value=self.config.search_results_default_order.value,
                 )
                 yield ActiveSprintCheckbox(value=self.config.active_sprint_on_startup)
-                yield JQLSearchWidget()
+                jql_input = JQLSearchWidget()
+                yield jql_input
+                yield JQLInputAutoComplete(target=jql_input, api_controller=self.api)
                 yield Button(
                     'Search',
                     id='run-button',
@@ -777,6 +807,19 @@ class MainScreen(Screen):
         elif event.worker.name == 'fetch_issue_types':
             self.issue_type_selector.set_options(event.worker.result or [])
 
+    @on(Select.Changed, '#issue-search-order-by-selector')
+    def handle_order_by_selection(self, event: Select.Changed) -> None:
+        """Stops sorting the results by a column when the user chooses a different sorting criteria.
+
+        Sorting by a column takes precedence over this widget, so the widget would appear to have no effect unless the
+        sorting of the column is cleared.
+
+        Args:
+            event: the event triggered by the selection.
+        """
+
+        self.search_results_table.clear_sorting()
+
     @on(Select.Changed, '#jira-project-selector')
     async def handle_project_selection(self, event: Select.Changed) -> None:
         """Handles the selection of a project.
@@ -841,11 +884,14 @@ class MainScreen(Screen):
         if value := self.project_selector.selection:
             project_key = value
 
-        order_by = (
+        order_by: WorkItemsSearchOrderBy | SortSpec | None = (
             WorkItemsSearchOrderBy(self.order_by_widget.selection)
             if self.order_by_widget.selection
             else None
         )
+        if sort_spec := self.search_results_table.sort_spec:
+            # sorting by a column takes precedence over the criteria selected in the "Order By" widget
+            order_by = sort_spec
 
         # build the JQL query to search items based on a user-provided JQL query expression or a search term.
         jql_query: str | None = self._build_jql_query(
@@ -869,6 +915,7 @@ class MainScreen(Screen):
                 next_page_token=next_page_token,
                 limit=self.config.search_results_per_page,
                 order_by=order_by,
+                fields=api_fields_for(self.active_columns),
             )
         else:
             response = await self.api.search_issues_by_page_number(
@@ -883,6 +930,7 @@ class MainScreen(Screen):
                 page=page,
                 limit=self.config.search_results_per_page,
                 order_by=order_by,
+                fields=api_fields_for(self.active_columns),
             )
 
         if not response.success or response.result is None:
@@ -1298,6 +1346,108 @@ class MainScreen(Screen):
     async def action_find_by_text(self) -> None:
         """Opens a screen to allow the user to enter a term to search items by text."""
         await self.app.push_screen(TextSearchScreen(), self.request_text_search)
+
+    async def _fetch_jira_fields(self) -> list[JiraField]:
+        """Fetches the fields of the Jira instance.
+
+        The fields are cached in the session because they are needed every time the user opens the column selection
+        screen, and they do not change while the app is running.
+
+        Returns:
+            The fields of the Jira instance; or an empty list if they cannot be fetched.
+        """
+
+        session = ApplicationSession()
+        if (cached := session.get('jira_fields')) is not None:
+            return cached
+        response: APIControllerResponse = await self.api.get_fields()
+        fields: list[JiraField] = response.result if response.success and response.result else []
+        session.jira_fields = fields
+        # the JQL reference data tells us which of the fields the results can be sorted by
+        await self._fetch_jql_fields()
+        return fields
+
+    async def _fetch_jql_fields(self) -> list:
+        """Fetches the fields that can be referenced in a JQL expression.
+
+        These are cached in the session: they do not change while the app is running, and they are needed to work out
+        whether the results can be sorted by a custom field.
+
+        Returns:
+            The fields that can be referenced in a JQL expression; or an empty list if they cannot be fetched.
+        """
+
+        session = ApplicationSession()
+        if (cached := session.get('jql_fields')) is not None:
+            return cached
+        response: APIControllerResponse = await self.api.get_jql_autocomplete_data()
+        jql_fields = (
+            response.result.visible_field_names if response.success and response.result else []
+        )
+        session.jql_fields = jql_fields
+        return jql_fields
+
+    def _available_columns(self, jira_fields: list[JiraField]) -> list[ColumnSpec]:
+        """Builds the list of columns that the user can display.
+
+        Args:
+            jira_fields: the fields of the Jira instance.
+
+        Returns:
+            The built-in columns followed by a column for every field of the Jira instance that is not already
+            displayed by a built-in column.
+        """
+
+        columns: list[ColumnSpec] = list(BUILTIN_COLUMNS.values())
+        known_fields: set[str] = {
+            api_field for column in columns for api_field in column.api_fields
+        }
+        known_fields.update(BUILTIN_COLUMNS)
+        extra_ids = [
+            jira_field.id
+            for jira_field in jira_fields
+            if jira_field.id not in known_fields and jira_field.key not in known_fields
+        ]
+        return columns + resolve_columns(extra_ids, jira_fields=jira_fields)
+
+    async def action_configure_columns(self) -> None:
+        """Opens a screen to allow the user to choose the columns of the search results table."""
+
+        jira_fields = await self._fetch_jira_fields()
+        await self.app.push_screen(
+            ColumnSelectionScreen(
+                available_columns=self._available_columns(jira_fields),
+                selected_column_ids=[column.id for column in self.active_columns],
+                default_column_ids=column_ids_from_config(self.config),
+            ),
+            callback=self._apply_columns,
+        )
+
+    def _apply_columns(self, column_ids: list[str] | None) -> None:
+        """Displays the columns selected by the user.
+
+        ```{important}
+        This re-runs the search. The data of a column that was just added was never requested from the API, so the
+        results currently displayed cannot fill it in. This resets the results to the first page.
+        ```
+
+        Args:
+            column_ids: the ids of the columns selected by the user; or `None` if the user cancelled.
+        """
+
+        if not column_ids:
+            return
+        session = ApplicationSession()
+        self.active_columns = resolve_columns(
+            column_ids,
+            jira_fields=session.get('jira_fields') or [],
+            widths=getattr(self.config, 'search_results_column_widths', None),
+        )
+        session.active_column_ids = column_ids
+        table = self.search_results_table
+        table.page = 1
+        table.token_by_page = {}
+        self.run_worker(self.action_search(), exclusive=True)
 
     async def _focus_item_after_startup(self, position: int) -> None:
         """Focuses and opens a work item at the specified position after startup search completes.

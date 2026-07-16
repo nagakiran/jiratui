@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from jiratui.api.utils import build_issue_search_jql, parse_required_fields_from_meta
-from jiratui.models import WorkItemsSearchOrderBy
+from jiratui.models import SortSpec, WorkItemsSearchOrderBy
 
 
 def test_build_issue_search_jql():
@@ -129,3 +129,40 @@ def test_parse_required_fields_from_meta_with_all_fields_not_required():
     result = parse_required_fields_from_meta(metadata)
     # THEN
     assert result == []
+
+
+def test_build_issue_search_jql_with_a_sort_spec():
+    # GIVEN
+    sort_spec = SortSpec(field='cf[10343]', descending=True)
+    # WHEN
+    jql = build_issue_search_jql(project_key='SB', order_by=sort_spec)
+    # THEN
+    assert jql == 'project = "SB" order by cf[10343] desc'
+
+
+def test_build_issue_search_jql_with_an_ascending_sort_spec():
+    assert build_issue_search_jql(order_by=SortSpec(field='created')) == 'order by created asc'
+
+
+def test_build_issue_search_jql_with_a_sort_spec_and_a_user_defined_order_by():
+    # the JQL of the user already sorts the results, so the sorting of the column cannot be applied
+    # GIVEN
+    jql_query = 'project = "SB" order by key desc'
+    # WHEN
+    jql = build_issue_search_jql(jql_query=jql_query, order_by=SortSpec(field='created'))
+    # THEN
+    assert jql == jql_query
+
+
+def test_sort_spec_from_order_by():
+    assert SortSpec.from_order_by(WorkItemsSearchOrderBy.CREATED_DESC) == SortSpec(
+        field='created', descending=True
+    )
+    assert SortSpec.from_order_by(WorkItemsSearchOrderBy.KEY_ASC) == SortSpec(
+        field='key', descending=False
+    )
+
+
+def test_sort_spec_toggled():
+    assert SortSpec(field='created').toggled() == SortSpec(field='created', descending=True)
+    assert SortSpec(field='created', descending=True).toggled() == SortSpec(field='created')
