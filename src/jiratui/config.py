@@ -113,6 +113,10 @@ class ApplicationConfiguration(BaseSettings):
     """This controls how many days worth of issues to fetch when no other search criteria has been defined."""
     show_issue_web_links: bool = True
     """If `True` (default) then the application will retrieve the remote links related to a work item."""
+    show_details_pane_on_startup: bool = True
+    """Whether the work-item details/tabs pane is visible when the application starts. When `True` (default) the screen
+    starts with the results list and the details pane sharing the width equally. When `False` the results list starts
+    using the full width; the details pane can be toggled with `ctrl+b` or revealed by pressing Enter on a work item."""
     ignore_users_without_email: bool = True
     """Controls whether Jira users without an email address configured should be included in the list of users and users
     assignable to projects and work items."""

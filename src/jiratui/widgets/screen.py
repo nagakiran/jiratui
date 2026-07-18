@@ -129,6 +129,32 @@ class MainScreen(Screen):
             tooltip='Choose the columns of the search results',
         ),
         Binding(
+            key='ctrl+b',
+            action='toggle_details_pane',
+            description='Details',
+            show=True,
+            key_display='^b',
+            tooltip='Show/hide the work item details pane',
+        ),
+        Binding(
+            key='ctrl+right_square_bracket',
+            action='widen_list',
+            description='Wider',
+            show=True,
+            key_display='^]',
+            tooltip='Widen the work item list pane',
+        ),
+        Binding(
+            # ctrl+[ can't be used: terminals encode it as the Escape key (\x1b), so ctrl+\
+            # (the adjacent key) is the reliable partner to ctrl+] for narrowing the list.
+            key='ctrl+backslash',
+            action='narrow_list',
+            description='Narrower',
+            show=True,
+            key_display='^\\',
+            tooltip='Narrow the work item list pane',
+        ),
+        Binding(
             key='p',
             action='focus_widget("p")',
             description='Focus the project selection widget',
@@ -335,6 +361,10 @@ class MainScreen(Screen):
             '8': '#issue_subtasks',
         }
         self.config = CONFIGURATION.get()
+        # Width of the left (results list) pane for each split step; index 0 (None) means the
+        # default 1fr/1fr (50/50) share with the details pane. Stepped with ctrl+] / ctrl+[.
+        self._split_ratios: list[int | None] = [None, 70, 85]
+        self._split_ratio_index: int = 0
         self.work_item_tabs_titles: dict = {}
         if self.config.show_keybinding_hints:
             self.work_item_tabs_titles = {
@@ -608,6 +638,11 @@ class MainScreen(Screen):
         Returns:
             None
         """
+
+        # start with the details pane hidden (list using the full width) when configured to do so
+        if not getattr(self.config, 'show_details_pane_on_startup', True):
+            self.tabs.display = False
+            self.search_results_container.styles.width = '1fr'
 
         # fetch the list of projects
         workers: list[Worker] = [self.run_worker(self.fetch_projects())]
@@ -1068,6 +1103,66 @@ class MainScreen(Screen):
             HistoryScreen(self.__recent_history_manager),
             callback=self._close_recent_history_screen,
         )
+
+    def _apply_split_ratio(self) -> None:
+        """Applies the current split ratio to the left (results list) pane.
+
+        Only the left pane's width is set; the details pane keeps its `1fr` width and fills
+        the remaining space automatically.
+        """
+
+        ratio = self._split_ratios[self._split_ratio_index]
+        if ratio is None:
+            self.search_results_container.styles.width = '1fr'
+        else:
+            self.search_results_container.styles.width = f'{ratio}%'
+
+    def show_details_pane(self) -> None:
+        """Reveals the work item details pane and restores the current split ratio.
+
+        This is a no-op when the pane is already visible, so it is safe to call whenever a work
+        item is selected.
+        """
+
+        if not self.tabs.display:
+            self.tabs.display = True
+            self._apply_split_ratio()
+
+    def action_toggle_details_pane(self) -> None:
+        """Shows or hides the work item details pane (bound to `ctrl+b`)."""
+
+        if self.tabs.display:
+            self.tabs.display = False
+            # let the results list take the whole row while the details pane is hidden
+            self.search_results_container.styles.width = '1fr'
+        else:
+            self.show_details_pane()
+
+    def action_widen_list(self) -> None:
+        """Steps the results list pane wider, narrowing the details pane (bound to `ctrl+]`).
+
+        Reveals the details pane first if it is hidden.
+        """
+
+        if not self.tabs.display:
+            self.show_details_pane()
+            return
+        if self._split_ratio_index < len(self._split_ratios) - 1:
+            self._split_ratio_index += 1
+            self._apply_split_ratio()
+
+    def action_narrow_list(self) -> None:
+        """Steps the results list pane narrower, widening the details pane (bound to `ctrl+[`).
+
+        Reveals the details pane first if it is hidden.
+        """
+
+        if not self.tabs.display:
+            self.show_details_pane()
+            return
+        if self._split_ratio_index > 0:
+            self._split_ratio_index -= 1
+            self._apply_split_ratio()
 
     async def action_search(self, search_term: str | None = None) -> None:
         """Handles the event  when the user presses the "search" button or "ctrl+r"."""

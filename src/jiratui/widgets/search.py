@@ -440,6 +440,8 @@ class IssuesSearchResultsTable(DataTable):
         """Fetches the details of the currently-selected item."""
         if event.row_key:
             screen = cast('MainScreen', self.screen)  # type:ignore[name-defined] # noqa: F821
+            # bring the details pane back into view if the user hid it; no-op when already visible
+            screen.show_details_pane()
             self.current_work_item_id, self.current_work_item_key = event.row_key.value.split('#')
             # use exclusive=True to make sure that if the user selects another work item before the worker finishes
             # retrieving the data of the previously selected the correct data is fetched

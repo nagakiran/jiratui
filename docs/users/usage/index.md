@@ -260,6 +260,9 @@ Besides the hot-keys above the following are always available.
 | `ctrl+r` | Searches work items (this is the same as clicking the "Search" button) |
 | `/`      | Enables full-text search                                               |
 | `ctrl+n` | Creates a new work item                                                |
+| `ctrl+b` | Shows/hides the work item details pane (the list uses the full width when hidden) |
+| `ctrl+]` | Widens the work item list pane (narrows the details pane)             |
+| `ctrl+\` | Narrows the work item list pane (widens the details pane)            |
 | `f1`     | Shows this help                                                        |
 | `f2`     | Shows server information                                               |
 | `f3`     | Shows the currently loaded settings                                    |

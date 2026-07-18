@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, PropertyMock, call, patch
 
 from pydantic import SecretStr
 import pytest
+from textual.coordinate import Coordinate
 from textual.widgets import Select
 
 from jiratui.api_controller.controller import APIController, APIControllerResponse
@@ -1335,3 +1336,141 @@ async def test_handle_search_work_item_message_without_work_item_key(
         await pilot.pause()
         # THEN
         load_work_item_mock.assert_not_called()
+
+
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
+async def test_toggle_details_pane_hides_and_shows_the_pane(
+    fetch_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    app,
+):
+    """ctrl+b hides the details pane; pressing it again shows it."""
+    async with app.run_test() as pilot:
+        main_screen = cast('MainScreen', app.screen)  # type:ignore[name-defined] # noqa: F821
+        # GIVEN the pane is visible by default
+        assert main_screen.tabs.display is True
+        # WHEN the user presses ctrl+b
+        await pilot.press('ctrl+b')
+        # THEN the pane is hidden and the list takes the whole row
+        assert main_screen.tabs.display is False
+        assert str(main_screen.search_results_container.styles.width) == '1fr'
+        # WHEN the user presses ctrl+b again
+        await pilot.press('ctrl+b')
+        # THEN the pane is visible again
+        assert main_screen.tabs.display is True
+
+
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
+async def test_widen_and_narrow_list_step_and_clamp(
+    fetch_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    app,
+):
+    """ctrl+] widens the list stepping through the ratios and clamps at the widest;
+    ctrl+\\ narrows it back and clamps at the default 50/50."""
+    async with app.run_test() as pilot:
+        main_screen = cast('MainScreen', app.screen)  # type:ignore[name-defined] # noqa: F821
+        # GIVEN the default 50/50 split
+        assert main_screen._split_ratio_index == 0
+        assert str(main_screen.search_results_container.styles.width) == '1fr'
+        # WHEN widening
+        await pilot.press('ctrl+right_square_bracket')
+        assert main_screen._split_ratio_index == 1
+        assert str(main_screen.search_results_container.styles.width) == '70w'
+        await pilot.press('ctrl+right_square_bracket')
+        assert main_screen._split_ratio_index == 2
+        assert str(main_screen.search_results_container.styles.width) == '85w'
+        # THEN widening past the last step is clamped
+        await pilot.press('ctrl+right_square_bracket')
+        assert main_screen._split_ratio_index == 2
+        # WHEN narrowing back down
+        await pilot.press('ctrl+backslash')
+        assert main_screen._split_ratio_index == 1
+        await pilot.press('ctrl+backslash')
+        assert main_screen._split_ratio_index == 0
+        assert str(main_screen.search_results_container.styles.width) == '1fr'
+        # THEN narrowing past the default is clamped
+        await pilot.press('ctrl+backslash')
+        assert main_screen._split_ratio_index == 0
+
+
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
+async def test_resize_keys_reveal_the_pane_when_hidden(
+    fetch_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    app,
+):
+    """Pressing a resize key while the pane is hidden re-shows it instead of resizing."""
+    async with app.run_test() as pilot:
+        main_screen = cast('MainScreen', app.screen)  # type:ignore[name-defined] # noqa: F821
+        # GIVEN the pane is hidden
+        await pilot.press('ctrl+b')
+        assert main_screen.tabs.display is False
+        # WHEN the user presses a resize key
+        await pilot.press('ctrl+right_square_bracket')
+        # THEN the pane is revealed and the ratio is unchanged
+        assert main_screen.tabs.display is True
+        assert main_screen._split_ratio_index == 0
+
+
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue')
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
+async def test_selecting_a_work_item_reveals_a_hidden_pane(
+    fetch_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    fetch_issue_mock: AsyncMock,
+    app,
+    jira_issues,
+):
+    """Pressing Enter on a work item brings the hidden details pane back into view."""
+    async with app.run_test() as pilot:
+        main_screen = cast('MainScreen', app.screen)  # type:ignore[name-defined] # noqa: F821
+        table = main_screen.search_results_table
+        table.search_results = JiraIssueSearchResponse(issues=jira_issues)
+        table.focus()
+        table.cursor_coordinate = Coordinate(0, 1)
+        # GIVEN the pane is hidden
+        await pilot.press('ctrl+b')
+        assert main_screen.tabs.display is False
+        # WHEN the user selects a work item
+        await pilot.press('enter')
+        await pilot.pause()
+        # THEN the pane is revealed and the item was fetched
+        assert main_screen.tabs.display is True
+        fetch_issue_mock.assert_called()
+
+
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
+async def test_details_pane_hidden_on_startup_when_configured(
+    fetch_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    app,
+):
+    """When show_details_pane_on_startup is False the pane starts hidden and the list is full width."""
+    # GIVEN
+    app.config.show_details_pane_on_startup = False
+    async with app.run_test():
+        main_screen = cast('MainScreen', app.screen)  # type:ignore[name-defined] # noqa: F821
+        # THEN
+        assert main_screen.tabs.display is False
+        assert str(main_screen.search_results_container.styles.width) == '1fr'
