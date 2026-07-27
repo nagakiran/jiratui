@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Added
+
+- `search_results_columns` now accepts the name of a field, not only its id; e.g. `Fix-ETA` and `Fix-ETA[Date]` both
+resolve to `customfield_10109`. Names are matched case-insensitively against the fields of the Jira instance.
+- The screen that configures the columns (`f7`) displays the id of every column next to its name, and a new `^y` key
+binding copies the current selection as a `search_results_columns` snippet for the configuration file. The snippet is
+also written to a temporary file, for the terminals that do not let the clipboard escape sequence through.
+- New `^e` key binding in the screens that add a comment and log work: it opens the text in the editor set in
+`text_editor` (which defaults to `$EDITOR`) and writes the result back into the textarea.
+
 ### Bug Fixes
 
 - Reset the form in the details tab every time the user performs a search. By [@whyisdifficult](https://github.com/whyisdifficult) in https://github.com/whyisdifficult/jiratui/pull/291

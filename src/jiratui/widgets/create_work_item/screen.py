@@ -1,9 +1,5 @@
 """This module contains the screen used for creating new work items."""
 
-import os
-import shlex
-import subprocess
-import tempfile
 from typing import Any, cast
 
 from rich.text import Text
@@ -29,6 +25,7 @@ from textual.widgets import (
 from jiratui.api_controller.controller import APIControllerResponse
 from jiratui.config import CONFIGURATION
 from jiratui.models import IssueType, JiraIssue, Project
+from jiratui.utils.editor import open_in_external_editor
 from jiratui.widgets.commons.adf import ADFMarkdownTextAreaWidget
 from jiratui.widgets.commons.base import (
     FieldMode,
@@ -124,29 +121,7 @@ class TextAreaTabbedContent(TabbedContent):
             self._edit_text_content(widget.text)
 
     def _open_as_temporary_file(self, command: str, content: str) -> str:
-        editor_args: list[str] = shlex.split(command)
-        with tempfile.NamedTemporaryFile(suffix='.md', delete=False) as temp_file:
-            temp_file_name = temp_file.name
-            temp_file.write(content.encode('utf-8'))
-            temp_file.flush()
-
-        editor_args.append(temp_file_name)
-        with self.app.suspend():
-            try:
-                subprocess.call(editor_args)
-            except OSError:
-                self.app.notify(
-                    severity='error',
-                    title="Can't run command",
-                    message=f'The command [b]{command}[/b] failed to run.',
-                )
-
-        new_content = content
-        with open(temp_file_name, 'r', encoding='utf-8') as temp_file:
-            new_content = temp_file.read()
-
-        os.remove(temp_file_name)
-        return new_content
+        return open_in_external_editor(self.app, command, content)
 
 
 class AddWorkItemScreen(Screen[dict[str, Any]]):

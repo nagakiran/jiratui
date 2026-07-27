@@ -654,6 +654,10 @@ class MainScreen(Screen):
             self.run_worker(self.fetch_issue_types())
             self.run_worker(self.fetch_statuses())
 
+        # the columns that display a custom field can only be resolved once the fields of the Jira instance are known;
+        # this must happen before the first search because the columns determine the fields requested from the API
+        await self._resolve_configured_columns()
+
         # if the user launched the app with a pre-defined user account id then let's fetch the details of the user
         # and set the user selection widget with the corresponding user; if any exists
         if self.initial_assignee_account_id:
@@ -1483,6 +1487,34 @@ class MainScreen(Screen):
         )
         session.jql_fields = jql_fields
         return jql_fields
+
+    async def _resolve_configured_columns(self) -> None:
+        """Re-resolves the columns configured by the user against the fields of the Jira instance.
+
+        The columns are resolved for the first time when the screen is created, at which point the fields of the Jira
+        instance are not known; so a column that displays a custom field cannot be labelled with the name of the field,
+        and a column that the user configured by name (e.g. `Fix-ETA`) cannot be mapped to the id of the field (e.g.
+        `customfield_10109`). This resolves them once the fields are available.
+
+        ```{important}
+        This runs before the first search: the columns determine the fields that the screen requests from the API, so a
+        column resolved after the search would display no data.
+        ```
+        """
+
+        column_ids = column_ids_from_config(self.config)
+        if all(column_id in BUILTIN_COLUMNS for column_id in column_ids):
+            # nothing to resolve; avoid the API call that fetches the fields
+            return
+        jira_fields = await self._fetch_jira_fields()
+        if not jira_fields:
+            # the fields could not be fetched; keep the columns resolved from the configuration as they are
+            return
+        self.active_columns = resolve_columns(
+            column_ids,
+            jira_fields=jira_fields,
+            widths=getattr(self.config, 'search_results_column_widths', None),
+        )
 
     def _available_columns(self, jira_fields: list[JiraField]) -> list[ColumnSpec]:
         """Builds the list of columns that the user can display.

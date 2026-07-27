@@ -1,3 +1,6 @@
+import tempfile
+
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -5,7 +8,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from jiratui.utils.columns import ColumnSpec
+from jiratui.utils.columns import ColumnSpec, config_snippet_for
 
 SELECTED_MARKER = '[x]'
 UNSELECTED_MARKER = '[ ]'
@@ -33,6 +36,14 @@ class ColumnSelectionScreen(ModalScreen[list[str] | None]):
         Binding('shift+up', 'move_up', 'Move up', show=True, key_display='shift+↑'),
         Binding('shift+down', 'move_down', 'Move down', show=True, key_display='shift+↓'),
         Binding('ctrl+r', 'reset', 'Reset', show=True, key_display='^r'),
+        Binding(
+            'ctrl+y',
+            'copy_config',
+            'Copy config',
+            show=True,
+            key_display='^y',
+            tooltip='Copies the selection as a snippet for the configuration file',
+        ),
     ]
     TITLE = 'Configure Columns'
     HELP = 'Choose the columns displayed in the search results'
@@ -120,9 +131,29 @@ class ColumnSelectionScreen(ModalScreen[list[str] | None]):
             if not self._matches_filter(column):
                 continue
             marker = SELECTED_MARKER if column_id in self._selected_ids else UNSELECTED_MARKER
-            option_list.add_option(Option(f'{marker} {column.label}', id=column_id))
+            option_list.add_option(Option(self._build_prompt(marker, column), id=column_id))
         if highlight_column_id:
             self._highlight(highlight_column_id)
+
+    @staticmethod
+    def _build_prompt(marker: str, column: ColumnSpec) -> Text:
+        """Builds the text of an entry of the list of columns.
+
+        The id of the column is displayed next to its name because that is what the user needs to write in the
+        configuration file, and a custom field is only ever named in the UI.
+
+        Args:
+            marker: indicates whether the column is currently displayed by the table.
+            column: the column.
+
+        Returns:
+            The text of the entry.
+        """
+
+        prompt = Text(f'{marker} {column.label}')
+        if column.id != column.label:
+            prompt.append(f'  {column.id}', style='dim')
+        return prompt
 
     def _highlight(self, column_id: str) -> None:
         option_list = self.option_list
@@ -193,6 +224,42 @@ class ColumnSelectionScreen(ModalScreen[list[str] | None]):
             column_id for column_id in self._default_ids if column_id in self._columns_by_id
         ]
         self._rebuild_options()
+
+    def config_snippet(self) -> str:
+        """The `search_results_columns` snippet that reproduces the current selection."""
+
+        return config_snippet_for(
+            [self._columns_by_id[column_id] for column_id in self._selected_ids]
+        )
+
+    def action_copy_config(self) -> None:
+        """Copies the current selection as a snippet for the configuration file.
+
+        The snippet is also written to a temporary file: the clipboard is set with an OSC 52 escape sequence, which
+        terminal multiplexers and remote sessions do not always let through.
+        """
+
+        if not self._selected_ids:
+            self.notify('Select at least one column.', title=self.TITLE, severity='warning')
+            return
+        snippet = self.config_snippet()
+        self.app.copy_to_clipboard(snippet)
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                encoding='utf-8',
+                prefix='jiratui-columns-',
+                suffix='.yaml',
+                delete=False,
+            ) as snippet_file:
+                snippet_file.write(f'{snippet}\n')
+                location = snippet_file.name
+        except OSError:
+            self.notify('Copied the columns to the clipboard.', title=self.TITLE)
+        else:
+            self.notify(
+                f'Copied the columns to the clipboard. Also saved to {location}', title=self.TITLE
+            )
 
     def action_apply(self) -> None:
         """Closes the screen and applies the selected columns."""

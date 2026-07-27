@@ -24,6 +24,7 @@ from textual.widgets import (
 )
 
 from jiratui.api_controller.controller import APIControllerResponse
+from jiratui.config import CONFIGURATION
 from jiratui.models import (
     JiraIssue,
     JiraIssueSearchResponse,
@@ -31,6 +32,7 @@ from jiratui.models import (
     PaginatedJiraWorklog,
     TimeTracking,
 )
+from jiratui.utils.editor import open_in_external_editor
 from jiratui.utils.urls import build_external_url_for_work_log
 from jiratui.widgets.work_item_worklog.widgets import (
     LogDateTimeInput,
@@ -591,7 +593,17 @@ class LogWorkScreen(Screen[LogWorkScreenResult | None]):
     """
 
     BINDINGS = [
-        ('escape', 'app.pop_screen', 'Close'),
+        Binding('escape', 'app.pop_screen', 'Close', show=True),
+        # the binding takes precedence over the textarea, which binds ctrl+e to "move to the end of the line"
+        Binding(
+            'ctrl+e',
+            'edit_in_editor',
+            'Editor',
+            show=True,
+            key_display='^e',
+            priority=True,
+            tooltip='Writes the description with the editor set in config.text_editor',
+        ),
     ]
 
     def __init__(
@@ -655,6 +667,29 @@ class LogWorkScreen(Screen[LogWorkScreenResult | None]):
                     'Save', variant='success', id='log-work-button-save', disabled=True, flat=True
                 )
                 yield Button('Cancel', variant='error', id='log-work-button-quit', flat=True)
+        yield Footer(show_command_palette=False, compact=True)
+
+    def action_edit_in_editor(self) -> None:
+        """Writes the description of the work log with the external editor set in the configuration."""
+
+        textarea = self.work_description_input
+        if textarea.disabled:
+            self.notify(
+                'Enter the time spent before writing a description.',
+                severity='warning',
+                title='Log Work',
+            )
+            return
+        editor: str | None = CONFIGURATION.get().text_editor
+        if not editor:
+            self.notify(
+                'No text editor is configured. Check the setting [b]text_editor[/b].',
+                severity='error',
+                title='Log Work',
+            )
+            return
+        textarea.text = open_in_external_editor(self.app, editor, textarea.text).strip()
+        textarea.focus()
 
     @on(Input.Changed, 'TimeSpentInput')
     def validate_time_spent(self, event: Input.Changed) -> None:

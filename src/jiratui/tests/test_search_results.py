@@ -1207,3 +1207,61 @@ async def test_the_column_of_the_cursor_is_clamped_when_the_columns_change(
         table.search_results = JiraIssueSearchResponse(issues=jira_issues)
         # THEN
         assert table.cursor_column == 1
+
+
+@patch.object(APIController, 'get_fields')
+@patch('jiratui.widgets.screen.MainScreen.search_issues')
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
+async def test_columns_configured_by_name_are_resolved_on_startup(
+    search_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    search_issues_mock: AsyncMock,
+    get_fields_mock: AsyncMock,
+    app,
+):
+    # GIVEN a column configured with the name of a custom field, as displayed by the Jira UI
+    app.config.search_results_columns = ['key', 'Fix-ETA[Date]']
+    get_fields_mock.return_value = APIControllerResponse(
+        success=True,
+        result=[
+            JiraField(
+                id='customfield_10109',
+                key='customfield_10109',
+                name='Fix-ETA',
+                custom=True,
+                schema={},
+            )
+        ],
+    )
+    async with app.run_test():
+        main_screen = cast('MainScreen', app.screen)  # type:ignore[name-defined] # noqa: F821
+        # THEN the column is mapped to the id of the field, which is what makes it render a value
+        assert [(column.id, column.label) for column in main_screen.active_columns] == [
+            ('key', 'Key'),
+            ('customfield_10109', 'Fix-ETA'),
+        ]
+
+
+@patch.object(APIController, 'get_fields')
+@patch('jiratui.widgets.screen.MainScreen.search_issues')
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
+async def test_built_in_columns_are_not_resolved_against_the_fields_of_the_instance(
+    search_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    search_issues_mock: AsyncMock,
+    get_fields_mock: AsyncMock,
+    app,
+):
+    # GIVEN a configuration that only uses built-in columns
+    app.config.search_results_columns = ['key', 'summary']
+    async with app.run_test():
+        # THEN the fields of the instance are not fetched
+        get_fields_mock.assert_not_called()

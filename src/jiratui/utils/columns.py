@@ -11,6 +11,7 @@ requested from the API when the work items are searched. Use `api_fields_for` to
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
+import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -34,6 +35,9 @@ key of the work item; so these are requested even when no column displays them.
 
 DEFAULT_CUSTOM_COLUMN_WIDTH = 20
 """The nominal width assumed for a column that displays a field that is not known to the registry."""
+
+TYPE_HINT_PATTERN = re.compile(r'\s*\[[^\]]*\]\s*$')
+"""Matches the type hint that Jira appends to the name of a field; e.g. the `[Date]` of `Fix-ETA[Date]`."""
 
 
 @dataclass(frozen=True)
@@ -211,6 +215,22 @@ def column_ids_from_config(config: Any) -> list[str]:
     return valid or list(DEFAULT_COLUMNS)
 
 
+def field_name_without_type(value: str) -> str:
+    """Removes the trailing type hint from the name of a field.
+
+    The JQL auto-complete data, and the Jira UI itself, refer to a field as `Fix-ETA[Date]`. Users naturally copy that
+    form into the configuration file, so the type hint is tolerated when a column is looked up by name.
+
+    Args:
+        value: the name of a field, possibly followed by a type hint between square brackets.
+
+    Returns:
+        The name of the field without the type hint.
+    """
+
+    return TYPE_HINT_PATTERN.sub('', value).strip()
+
+
 def resolve_columns(
     ids: Sequence[str],
     jira_fields: Sequence['JiraField'] | None = None,
@@ -219,32 +239,50 @@ def resolve_columns(
     """Builds the specs of the columns to display.
 
     Args:
-        ids: the ids of the columns, in the order in which they should be displayed. An id that is not a built-in
-        column is assumed to be the id of a Jira field.
-        jira_fields: the fields known to the Jira instance. Used to label the columns that display a field that is not
-        built-in. When a field is unknown the id of the field is used as the label.
-        widths: optional widths that override the nominal width of a column, keyed by the id of the column.
+        ids: the columns to display, in the order in which they should be displayed. An entry that is not a built-in
+        column is looked up among the fields of the Jira instance, first by id and then by name; e.g. both
+        `customfield_10109` and `Fix-ETA` resolve to the same column. An entry that matches nothing is assumed to be
+        the id of a Jira field.
+        jira_fields: the fields known to the Jira instance. Used to resolve and label the columns that display a field
+        that is not built-in. When a field is unknown the id of the field is used as the label.
+        widths: optional widths that override the nominal width of a column, keyed by the id of the column; or by the
+        name of the field when the column was configured by name.
 
     Returns:
         A list of `ColumnSpec`. Ids that appear more than once are resolved once, keeping the first occurrence.
     """
 
     fields_by_id: dict[str, JiraField] = {}
+    fields_by_name: dict[str, JiraField] = {}
     for jira_field in jira_fields or []:
         fields_by_id[jira_field.id] = jira_field
         if jira_field.key:
             fields_by_id.setdefault(jira_field.key, jira_field)
+        if jira_field.name:
+            fields_by_name.setdefault(jira_field.name.lower(), jira_field)
 
     columns: list[ColumnSpec] = []
+    # the widths of the columns that the user configured by name are keyed by name; keep track of the original entry
+    # so those can be matched too
+    configured_as: dict[str, str] = {}
     seen: set[str] = set()
-    for column_id in ids:
-        if not column_id or column_id in seen:
+    for entry in ids:
+        if not entry:
             continue
-        seen.add(column_id)
-        if builtin := BUILTIN_COLUMNS.get(column_id):
+        if builtin := BUILTIN_COLUMNS.get(entry):
+            if builtin.id in seen:
+                continue
+            seen.add(builtin.id)
             columns.append(builtin)
             continue
-        jira_field = fields_by_id.get(column_id)
+        jira_field = fields_by_id.get(entry) or fields_by_name.get(
+            field_name_without_type(entry).lower()
+        )
+        column_id = jira_field.id if jira_field else entry
+        if column_id in seen:
+            continue
+        seen.add(column_id)
+        configured_as[column_id] = entry
         columns.append(
             ColumnSpec(
                 id=column_id,
@@ -255,11 +293,35 @@ def resolve_columns(
     if not columns:
         columns = [BUILTIN_COLUMNS[column_id] for column_id in DEFAULT_COLUMNS]
     if widths:
-        columns = [
-            replace(column, width=widths[column.id]) if column.id in widths else column
-            for column in columns
-        ]
+        resized: list[ColumnSpec] = []
+        for column in columns:
+            width = widths.get(column.id)
+            if width is None:
+                width = widths.get(configured_as.get(column.id, column.id))
+            resized.append(replace(column, width=width) if width is not None else column)
+        columns = resized
     return columns
+
+
+def config_snippet_for(columns: Sequence[ColumnSpec]) -> str:
+    """Builds the `search_results_columns` snippet that reproduces a set of columns.
+
+    The ids of the custom fields are not displayed anywhere else in the app, so a user who picks the columns
+    interactively has no way of working out what to write in the configuration file. This renders the snippet that they
+    can paste into it.
+
+    Args:
+        columns: the columns to display, in the order in which they should be displayed.
+
+    Returns:
+        A block of YAML. The id of a column is annotated with the name of the field when the two differ.
+    """
+
+    lines: list[str] = ['search_results_columns:']
+    for column in columns:
+        comment = f'  # {column.label}' if column.label != column.id else ''
+        lines.append(f'  - {column.id}{comment}')
+    return '\n'.join(lines)
 
 
 def api_fields_for(columns: Sequence[ColumnSpec]) -> list[str]:

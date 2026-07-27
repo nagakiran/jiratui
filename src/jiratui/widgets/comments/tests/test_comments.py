@@ -384,3 +384,45 @@ async def test_delete_comment_comments_left_without_getting_comments(
         delete_comment_mock.assert_called_once_with('WI-1', '1')
         get_comments_mock.assert_not_called()
         assert len(widget.children) == 1
+
+
+@pytest.mark.asyncio
+@patch('jiratui.widgets.comments.add.open_in_external_editor')
+@patch('jiratui.widgets.comments.add.CONFIGURATION')
+async def test_add_comment_with_external_editor(config_var_mock, editor_mock, app):
+    # GIVEN
+    config_var_mock.get.return_value = MagicMock(text_editor='vim')
+    editor_mock.return_value = '  written with the editor  '
+    async with app.run_test() as pilot:
+        screen = AddCommentScreen('WI-1')
+        await app.push_screen(screen)
+        await pilot.pause()
+        # WHEN
+        await pilot.press('ctrl+e')
+        await pilot.pause()
+        # THEN
+        editor_mock.assert_called_once_with(app, 'vim', '')
+        assert screen.comment_textarea.text == 'written with the editor'
+        # the content written with the editor enables the button that saves the comment
+        assert screen.save_button.disabled is False
+
+
+@pytest.mark.asyncio
+@patch('jiratui.widgets.comments.add.open_in_external_editor')
+@patch('jiratui.widgets.comments.add.CONFIGURATION')
+async def test_add_comment_with_external_editor_without_editor_configured(
+    config_var_mock, editor_mock, app
+):
+    # GIVEN
+    config_var_mock.get.return_value = MagicMock(text_editor=None)
+    async with app.run_test() as pilot:
+        screen = AddCommentScreen('WI-1')
+        screen.notify = Mock()
+        await app.push_screen(screen)
+        await pilot.pause()
+        # WHEN
+        await pilot.press('ctrl+e')
+        await pilot.pause()
+        # THEN
+        editor_mock.assert_not_called()
+        assert screen.notify.call_args.kwargs['severity'] == 'error'

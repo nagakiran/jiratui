@@ -9,6 +9,7 @@ from jiratui.utils.columns import (
     DEFAULT_COLUMNS,
     api_fields_for,
     column_ids_from_config,
+    config_snippet_for,
     fixed_width_of,
     resolve_columns,
     sortable_field_for,
@@ -70,9 +71,57 @@ def test_resolve_columns_labels_an_unknown_field_with_its_id():
     assert resolve_columns(['customfield_99999'])[0].label == 'customfield_99999'
 
 
+@pytest.mark.parametrize(
+    'entry', ['Fix-ETA', 'fix-eta', 'FIX-ETA', 'Fix-ETA[Date]', 'Fix-ETA [Date]']
+)
+def test_resolve_columns_resolves_a_custom_field_by_name(entry):
+    # the id of a custom field is not displayed in the Jira UI; users configure the column with the name of the field
+    columns = resolve_columns(
+        [entry], jira_fields=[build_jira_field('customfield_10109', 'Fix-ETA')]
+    )
+    assert columns[0].id == 'customfield_10109'
+    assert columns[0].label == 'Fix-ETA'
+    # the column only renders a value if the field is requested from the API
+    assert columns[0].api_fields == ('customfield_10109',)
+
+
+def test_resolve_columns_ignores_a_field_configured_by_name_and_by_id():
+    columns = resolve_columns(
+        ['Fix-ETA', 'customfield_10109'],
+        jira_fields=[build_jira_field('customfield_10109', 'Fix-ETA')],
+    )
+    assert [column.id for column in columns] == ['customfield_10109']
+
+
+def test_resolve_columns_keeps_an_unknown_name_as_the_id_of_a_field():
+    # the fields are unknown when the app starts; the columns are re-resolved once they are fetched
+    columns = resolve_columns(['Fix-ETA'])
+    assert columns[0].id == 'Fix-ETA'
+    assert columns[0].label == 'Fix-ETA'
+
+
 def test_resolve_columns_applies_width_overrides():
     columns = resolve_columns(['key', 'assignee'], widths={'assignee': 30})
     assert [(column.id, column.width) for column in columns] == [('key', 12), ('assignee', 30)]
+
+
+@pytest.mark.parametrize('width_key', ['customfield_10109', 'Fix-ETA'])
+def test_resolve_columns_applies_width_overrides_to_a_field_configured_by_name(width_key):
+    columns = resolve_columns(
+        ['Fix-ETA'],
+        jira_fields=[build_jira_field('customfield_10109', 'Fix-ETA')],
+        widths={width_key: 14},
+    )
+    assert columns[0].width == 14
+
+
+def test_config_snippet_annotates_the_ids_that_differ_from_the_name_of_the_field():
+    columns = resolve_columns(
+        ['key', 'Fix-ETA'], jira_fields=[build_jira_field('customfield_10109', 'Fix-ETA')]
+    )
+    assert config_snippet_for(columns) == (
+        'search_results_columns:\n  - key  # Key\n  - customfield_10109  # Fix-ETA'
+    )
 
 
 def test_api_fields_for_default_columns_matches_the_original_request():

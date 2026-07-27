@@ -1794,3 +1794,53 @@ async def test_work_log_screen_edit_entry_press_save(
         assert len(screen.work_log_items_container.children) == 1
         assert isinstance(app.screen, WorkItemWorkLogScreen)
         edit_worklog_entry_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch('jiratui.widgets.work_item_worklog.screens.open_in_external_editor')
+@patch('jiratui.widgets.work_item_worklog.screens.CONFIGURATION')
+async def test_log_work_screen_edit_description_with_external_editor(
+    config_var_mock, editor_mock, jira_api_controller, app
+):
+    # GIVEN
+    config_var_mock.get.return_value = MagicMock(text_editor='vim')
+    editor_mock.return_value = '  written with the editor  '
+    async with app.run_test() as pilot:
+        await app.push_screen(
+            LogWorkScreen(
+                '1',
+                LogWorkScreenMode.CREATE,
+                current_time_spent='2h',
+                current_date_started='2026-01-01',
+                current_description='some text',
+            )
+        )
+        screen = cast('LogWorkScreen', app.screen)  # type:ignore[name-defined] # noqa: F821
+        await pilot.pause()
+        # WHEN
+        await pilot.press('ctrl+e')
+        await pilot.pause()
+        # THEN
+        editor_mock.assert_called_once_with(app, 'vim', 'some text')
+        assert screen.work_description_input.text == 'written with the editor'
+
+
+@pytest.mark.asyncio
+@patch('jiratui.widgets.work_item_worklog.screens.open_in_external_editor')
+@patch('jiratui.widgets.work_item_worklog.screens.CONFIGURATION')
+async def test_log_work_screen_edit_description_with_external_editor_while_disabled(
+    config_var_mock, editor_mock, jira_api_controller, app
+):
+    # GIVEN a screen without the time spent, which keeps the description disabled
+    config_var_mock.get.return_value = MagicMock(text_editor='vim')
+    async with app.run_test() as pilot:
+        await app.push_screen(LogWorkScreen('1', LogWorkScreenMode.CREATE))
+        screen = cast('LogWorkScreen', app.screen)  # type:ignore[name-defined] # noqa: F821
+        screen.notify = Mock()
+        await pilot.pause()
+        # WHEN
+        await pilot.press('ctrl+e')
+        await pilot.pause()
+        # THEN
+        editor_mock.assert_not_called()
+        assert screen.notify.call_args.kwargs['severity'] == 'warning'

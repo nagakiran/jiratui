@@ -67,8 +67,9 @@ async def test_screen_lists_the_selected_columns_first(app):
         await pilot.pause()
         # THEN
         options = screen.option_list
-        assert str(options.get_option_at_index(0).prompt) == '[x] Key'
-        assert str(options.get_option_at_index(1).prompt) == '[x] Summary'
+        # every entry displays the id of the column next to its name: that is what goes in the configuration file
+        assert str(options.get_option_at_index(0).prompt) == '[x] Key  key'
+        assert str(options.get_option_at_index(1).prompt) == '[x] Summary  summary'
         # the rest of the columns are not selected
         assert all(
             str(options.get_option_at_index(index).prompt).startswith('[ ]')
@@ -187,7 +188,7 @@ async def test_filter_narrows_the_columns(app):
         # THEN
         options = screen.option_list
         assert options.option_count == 1
-        assert str(options.get_option_at_index(0).prompt) == '[ ] Assignee'
+        assert str(options.get_option_at_index(0).prompt) == '[ ] Assignee  assignee'
 
 
 @pytest.mark.asyncio
@@ -274,3 +275,37 @@ async def test_screen_ignores_a_selected_column_that_is_not_available(app):
         await pilot.pause()
         # THEN
         assert screen.selected_column_ids == ['key']
+
+
+@pytest.mark.asyncio
+async def test_copy_config_snippet(app):
+    async with app.run_test() as pilot:
+        # GIVEN
+        screen = build_screen(selected=['index', 'key', 'summary'])
+        app.copy_to_clipboard = Mock()  # type:ignore[method-assign]
+        await app.push_screen(screen)
+        await pilot.pause()
+        # WHEN
+        await pilot.press('ctrl+y')
+        await pilot.pause()
+        # THEN the snippet can be pasted into the configuration file as-is
+        assert app.copy_to_clipboard.call_args[0][0] == (
+            'search_results_columns:\n  - index  # #\n  - key  # Key\n  - summary  # Summary'
+        )
+
+
+@pytest.mark.asyncio
+async def test_copy_config_snippet_without_columns(app):
+    async with app.run_test() as pilot:
+        # GIVEN
+        screen = build_screen(selected=[])
+        app.copy_to_clipboard = Mock()  # type:ignore[method-assign]
+        screen.notify = Mock()
+        await app.push_screen(screen)
+        await pilot.pause()
+        # WHEN
+        await pilot.press('ctrl+y')
+        await pilot.pause()
+        # THEN
+        app.copy_to_clipboard.assert_not_called()
+        assert screen.notify.call_args.kwargs['severity'] == 'warning'
