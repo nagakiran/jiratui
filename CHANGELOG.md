@@ -19,6 +19,20 @@ also written to a temporary file, for the terminals that do not let the clipboar
 
 ### Bug Fixes
 
+- A clause whose value was suggested by the autocomplete no longer matches nothing. The API returns the values of a
+field the way they would be written in an expression, so a value that needs quoting arrives already quoted; the app
+quoted it a second time, turning e.g. `status != 'Dev Complete'` into `status != "\"Dev Complete\""`, which matches no
+status at all, so an inequality matched every item.
+- Selecting the `in` operator (or `not in`, `was in`, `was not in`) from the autocomplete now writes the parentheses
+that JQL requires around a list of values, and leaves the cursor between them.
+- Applying a suggestion inside a value whose opening quote the user has already typed no longer drops the quotes; e.g.
+completing `status = "In Prog` now gives `status = "In Progress"` rather than an invalid expression.
+- A JQL expression is now grouped when it is combined with the filters of the search bar, with a pre-defined
+expression, or with a full-text search. Without the parentheses an `or` in the expression bound more loosely than the
+`and` that joined it to the other criteria, and the search returned items that matched none of them; e.g. selecting a
+project and searching `assignee = currentUser() or labels in MNHA` returned items of other projects. An `ORDER BY`
+clause in the expression is kept at the end, where JQL expects it, and is no longer confused with the same words
+appearing inside a quoted value.
 - Reset the form in the details tab every time the user performs a search. By [@whyisdifficult](https://github.com/whyisdifficult) in https://github.com/whyisdifficult/jiratui/pull/291
 
 ## [1.10.1] 2026-07-03

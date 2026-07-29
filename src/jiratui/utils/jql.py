@@ -64,6 +64,9 @@ WORD_OPERATORS: tuple[str, ...] = (
 SYMBOL_OPERATORS: tuple[str, ...] = ('!~', '!=', '>=', '<=', '~', '=', '>', '<')
 """The operators made of symbols, longest first so that e.g. `>=` is not read as `>`."""
 
+LIST_OPERATORS: tuple[str, ...] = ('in', 'not in', 'was in', 'was not in')
+"""The operators whose right-hand side is a list, so it has to be written between parentheses."""
+
 LOGICAL_KEYWORDS: tuple[str, ...] = ('and', 'or', 'not')
 """The keywords that join the clauses of a JQL expression."""
 
@@ -103,12 +106,7 @@ class JQLToken:
 
         if not self.quoted:
             return self.text
-        text = self.text
-        quote = text[0]
-        text = text[1:]
-        if text.endswith(quote):
-            text = text[:-1]
-        return text.replace(f'\\{quote}', quote)
+        return strip_quotes(self.text)
 
 
 @dataclass(frozen=True)
@@ -128,7 +126,8 @@ class JQLCursorContext:
     operator: str | None = None
     """The operator in scope; set when the context is a value."""
     quoted: bool = False
-    """Whether the cursor is inside a quoted value. A suggestion applied here must not be quoted again."""
+    """Whether the cursor is inside a quoted value. The quotes are part of the span that a suggestion replaces, so a
+    suggestion applied here still has to be quoted."""
     keywords: tuple[str, ...] = dataclasses.field(default_factory=tuple)
     """The keywords that can be suggested when the context is a keyword."""
 
@@ -491,6 +490,75 @@ def _context_after(tokens: list[JQLToken], cursor: int) -> JQLCursorContext:
     )
 
 
+def strip_quotes(text: str) -> str:
+    """Removes the quotes that surround a value of a JQL expression.
+
+    The API returns the values of a field the way they would be written in an expression, so a value that needs
+    quoting arrives already quoted. The app stores the value on its own, and quotes it again when it writes it into an
+    expression, so the quotes have to come off first; otherwise the value ends up quoted twice and matches nothing.
+
+    Args:
+        text: a value, quoted or not. The closing quote may be missing, because the user may be typing the value.
+
+    Returns:
+        The value without its surrounding quotes, and with the quotes escaped inside it unescaped.
+    """
+
+    if not text or text[0] not in ('"', "'"):
+        return text
+    quote = text[0]
+    body = text[1:]
+    if body.endswith(quote) and not body.endswith(f'\\{quote}'):
+        body = body[:-1]
+    return body.replace(f'\\{quote}', quote)
+
+
+def operator_completion(operator: str, text_after: str = '') -> tuple[str, int]:
+    """The text to write in an expression for a selected operator.
+
+    An operator is always followed by something, so the space is written for the user. `in` and its variants are
+    followed by a list, which JQL requires to be written between parentheses, so those are written too and the cursor
+    is left between them.
+
+    Args:
+        operator: the operator selected by the user.
+        text_after: the text that follows the operator in the expression; the parentheses are not written when the
+            expression already has them.
+
+    Returns:
+        The text to write, and the position of the cursor within it.
+    """
+
+    if operator.lower() in LIST_OPERATORS and not text_after.lstrip().startswith('('):
+        text = f'{operator} ()'
+        return text, len(text) - 1
+    text = f'{operator} '
+    return text, len(text)
+
+
+def split_order_by(expression: str) -> tuple[str, str | None]:
+    """Splits an expression into the clauses that filter and the clause that sorts.
+
+    The `ORDER BY` clause has to be the last thing in an expression, so it cannot stay where it is when the expression
+    is combined with other criteria.
+
+    Args:
+        expression: a JQL expression.
+
+    Returns:
+        The filtering part of the expression, and its `ORDER BY` clause; the latter is `None` when the expression does
+        not sort.
+    """
+
+    for token in tokenize(expression):
+        if (
+            token.kind is JQLTokenKind.KEYWORD
+            and ' '.join(token.text.lower().split()) == 'order by'
+        ):
+            return expression[: token.start].strip(), expression[token.start :].strip()
+    return expression.strip(), None
+
+
 def quote_if_needed(value: str) -> str:
     """Quotes a value of a JQL expression when it cannot be used as-is.
 
@@ -541,7 +609,11 @@ def resolve_values(text: str, aliases: Mapping[tuple[str, str], str]) -> str:
             field = None
         elif token.kind is JQLTokenKind.VALUE and field is not None:
             if (resolved := aliases.get((field.lower(), token.value))) is not None:
-                replacements.append((token.start, token.end, quote_if_needed(resolved)))
+                # the alias holds the bare value; a value that arrived quoted is unquoted here as well, so that it is
+                # never written into the expression quoted twice
+                replacements.append(
+                    (token.start, token.end, quote_if_needed(strip_quotes(resolved)))
+                )
 
     # applied back to front so that a replacement does not shift the offsets of the ones not yet applied
     for start, end, replacement in reversed(replacements):

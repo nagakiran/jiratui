@@ -1,6 +1,7 @@
 from datetime import date
 
 from jiratui.models import SortSpec, WorkItemsSearchOrderBy
+from jiratui.utils.jql import split_order_by
 
 
 def parse_required_fields_from_meta(metadata: dict) -> list[str]:
@@ -81,14 +82,19 @@ def build_issue_search_jql(
     jql: str = ''
     if fields:
         jql = ' and '.join(fields)
+
+    # the `ORDER BY` clause has to be the last thing in the expression, so it is taken out of the caller's expression
+    # and put back once every criterion has been joined
+    order_by_clause: str | None = None
     if jql_query:
-        if jql:
-            jql = f'{jql} and {jql_query}'
-        else:
-            jql = jql_query
-    if order_by and 'order by' not in jql.lower():
-        if jql:
-            jql = f'{jql} order by {order_by.value}'
-        else:
-            jql = f'order by {order_by.value}'
+        filters, order_by_clause = split_order_by(jql_query)
+        if filters:
+            # the caller's expression is grouped: without the parentheses an `or` in it would bind more loosely than
+            # the `and` that joins it to the criteria above, and the search would return items that match neither
+            jql = f'{jql} and ({filters})' if jql else filters
+
+    if order_by_clause is None and order_by:
+        order_by_clause = f'order by {order_by.value}'
+    if order_by_clause:
+        jql = f'{jql} {order_by_clause}' if jql else order_by_clause
     return jql

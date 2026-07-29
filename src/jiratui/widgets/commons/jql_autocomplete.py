@@ -22,7 +22,14 @@ from textual_autocomplete import AutoComplete, DropdownItem, TargetState
 from jiratui.api_controller.controller import APIController, APIControllerResponse
 from jiratui.constants import LOGGER_NAME
 from jiratui.models import JQLAutocompleteSuggestion, JQLFieldRef
-from jiratui.utils.jql import JQLContext, JQLCursorContext, context_at, quote_if_needed
+from jiratui.utils.jql import (
+    JQLContext,
+    JQLCursorContext,
+    context_at,
+    operator_completion,
+    quote_if_needed,
+    strip_quotes,
+)
 from jiratui.utils.session import ApplicationSession
 
 logger = logging.getLogger(LOGGER_NAME)
@@ -256,10 +263,13 @@ class JQLAutoCompleteMixin:
         for suggestion in response.result:
             if not suggestion.value:
                 continue
-            display = suggestion.display_name or suggestion.value
-            if display != suggestion.value:
+            # the API returns the value the way it would be written in an expression, so a value that needs quoting
+            # arrives quoted; the alias holds the value on its own, because the expression quotes it when it needs to
+            value = strip_quotes(suggestion.value)
+            display = suggestion.display_name or value
+            if display != value:
                 # the expression shows the readable value; the search sends the one the API understands
-                jql_value_aliases()[(context.field.lower(), display)] = suggestion.value
+                jql_value_aliases()[(context.field.lower(), display)] = value
             items.append(DropdownItem(main=display, id=display))
         return items[:MAXIMUM_SUGGESTIONS]
 
@@ -293,16 +303,24 @@ class JQLAutoCompleteMixin:
         option_list = self.option_list  # type:ignore[attr-defined]
         self._complete(option_index=option_list.highlighted or 0)  # type:ignore[attr-defined]
 
-    def _completion_text(self, value: str) -> str:
-        """The text to insert in the expression for a selected suggestion."""
+    def _completion_text(self, value: str, text_after: str = '') -> tuple[str, int]:
+        """The text to insert in the expression for a selected suggestion, and the cursor position within it."""
 
         context = self._jql_context
         option_id = self._selected_option_id() or value
         if context is None:
-            return option_id
+            return option_id, len(option_id)
         if context.context in (JQLContext.VALUE, JQLContext.FIELD):
-            return option_id if context.quoted else quote_if_needed(option_id)
-        return option_id
+            # a quoted value is replaced along with its quotes, so the suggestion is quoted whether the user typed the
+            # opening quote or not
+            text = quote_if_needed(option_id)
+            if context.context is JQLContext.FIELD:
+                # the operator follows the field, so the user does not need to type the space
+                text = f'{text} '
+            return text, len(text)
+        if context.context is JQLContext.OPERATOR:
+            return operator_completion(option_id, text_after)
+        return option_id, len(option_id)
 
     def _selected_option_id(self) -> str | None:
         option_list = self.option_list  # type:ignore[attr-defined]
@@ -330,18 +348,11 @@ class JQLInputAutoComplete(JQLAutoCompleteMixin, AutoComplete):
 
         context = context_at(state.text, state.cursor_position)
         self._jql_context = context
-        text = self._completion_text(value)
+        text_after = state.text[context.replace_end :]
+        text, offset = self._completion_text(value, text_after)
         target: Input = self.target
-        new_value = (
-            f'{state.text[: context.replace_start]}{text}{state.text[context.replace_end :]}'
-        )
-        cursor = context.replace_start + len(text)
-        if context.context in (JQLContext.FIELD, JQLContext.OPERATOR):
-            # the next part of the clause follows, so the user does not need to type the space
-            new_value = f'{new_value[:cursor]} {new_value[cursor:]}'
-            cursor += 1
-        target.value = new_value
-        target.cursor_position = cursor
+        target.value = f'{state.text[: context.replace_start]}{text}{text_after}'
+        target.cursor_position = context.replace_start + offset
 
 
 class JQLTextArea(TextArea):
@@ -440,14 +451,11 @@ class JQLTextAreaAutoComplete(JQLAutoCompleteMixin, AutoComplete):
 
         context = context_at(state.text, state.cursor_position)
         self._jql_context = context
-        text = self._completion_text(value)
-        if context.context in (JQLContext.FIELD, JQLContext.OPERATOR):
-            # the next part of the clause follows, so the user does not need to type the space
-            text = f'{text} '
+        text, offset = self._completion_text(value, state.text[context.replace_end :])
         document = self._document
         self.target.replace(
             text,
             document.get_location_from_index(context.replace_start),
             document.get_location_from_index(context.replace_end),
         )
-        self.target.move_cursor(document.get_location_from_index(context.replace_start + len(text)))
+        self.target.move_cursor(document.get_location_from_index(context.replace_start + offset))

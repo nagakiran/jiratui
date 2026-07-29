@@ -236,6 +236,107 @@ async def test_applying_a_field_appends_a_space(app, reference_data_mock, sugges
 
 
 @pytest.mark.asyncio
+async def test_applying_the_in_operator_opens_a_list(app, reference_data_mock, suggestions_mock):
+    # `in` takes a list, and JQL only accepts a list between parentheses; the cursor is left inside them so that the
+    # values can be typed straight away
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            _, editor, autocomplete = await open_editor(app, pilot, 'project ')
+            # WHEN the 'in' operator is applied
+            autocomplete.option_list.highlighted = 2
+            autocomplete.apply_completion('in', autocomplete._get_target_state())
+            await pilot.pause()
+            # THEN
+            assert editor.text == 'project in ()'
+            assert editor.cursor_location == (0, 12)
+
+
+@pytest.mark.asyncio
+async def test_applying_an_equality_operator_only_appends_a_space(
+    app, reference_data_mock, suggestions_mock
+):
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            _, editor, autocomplete = await open_editor(app, pilot, 'project ')
+            autocomplete.option_list.highlighted = 0
+            autocomplete.apply_completion('=', autocomplete._get_target_state())
+            await pilot.pause()
+            assert editor.text == 'project = '
+            assert editor.cursor_location == (0, 10)
+
+
+@pytest.mark.asyncio
+async def test_applying_the_in_operator_does_not_repeat_an_existing_list(
+    app, reference_data_mock, suggestions_mock
+):
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            _, editor, autocomplete = await open_editor(app, pilot, 'project (MNHA)', cursor=(0, 8))
+            autocomplete.option_list.highlighted = 2
+            autocomplete.apply_completion('in', autocomplete._get_target_state())
+            await pilot.pause()
+            assert editor.text == 'project in (MNHA)'
+
+
+@pytest.mark.asyncio
+async def test_applying_a_value_inside_a_quoted_value_keeps_the_quotes(
+    app, reference_data_mock, suggestions_mock
+):
+    # the quotes typed by the user are part of the text that the suggestion replaces, so the suggestion has to bring
+    # them back; without them the expression is not valid JQL
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            _, editor, autocomplete = await open_editor(app, pilot, '"Dev Engineers" in ("naga')
+            autocomplete.option_list.highlighted = 0
+            autocomplete.apply_completion(
+                'Naga Kiran K - nagakiran@juniper.net', autocomplete._get_target_state()
+            )
+            await pilot.pause()
+            assert editor.text == '"Dev Engineers" in ("Naga Kiran K - nagakiran@juniper.net"'
+
+
+@pytest.mark.asyncio
+async def test_a_value_that_the_api_returns_quoted_is_not_recorded_as_an_alias(
+    app, reference_data_mock
+):
+    # the API returns the value the way it would be written in an expression; recording the quotes would make the
+    # search send `status != "\"Dev Complete\""`, which matches no status at all
+    suggestions_mock = AsyncMock(
+        return_value=APIControllerResponse(
+            result=[
+                JQLAutocompleteSuggestion(value='"Dev Complete"', display_name='Dev Complete'),
+            ]
+        )
+    )
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            _, editor, autocomplete = await open_editor(app, pilot, 'project = "Dev')
+            assert dropdown_options(autocomplete) == ['Dev Complete']
+            # WHEN
+            autocomplete.option_list.highlighted = 0
+            autocomplete.apply_completion('Dev Complete', autocomplete._get_target_state())
+            await pilot.pause()
+            # THEN the value stands on its own in the expression, and nothing has to be resolved at search time
+            assert editor.text == 'project = "Dev Complete"'
+            assert jql_value_aliases() == {}
+
+
+@pytest.mark.asyncio
 async def test_the_reference_data_is_fetched_once(app, reference_data_mock, suggestions_mock):
     with (
         patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),

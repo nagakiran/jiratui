@@ -4,8 +4,11 @@ from jiratui.utils.jql import (
     JQLContext,
     JQLTokenKind,
     context_at,
+    operator_completion,
     quote_if_needed,
     resolve_values,
+    split_order_by,
+    strip_quotes,
     tokenize,
 )
 
@@ -281,6 +284,71 @@ def test_quote_if_needed(value, expected):
     assert quote_if_needed(value) == expected
 
 
+@pytest.mark.parametrize(
+    'text, expected',
+    [
+        pytest.param('"Dev Complete"', 'Dev Complete', id='double-quotes'),
+        pytest.param("'Dev Complete'", 'Dev Complete', id='single-quotes'),
+        pytest.param('SB', 'SB', id='no-quotes'),
+        pytest.param('"In Prog', 'In Prog', id='the-user-is-still-typing-it'),
+        pytest.param('"say \\"hi\\""', 'say "hi"', id='unescapes-the-quotes-inside'),
+        pytest.param('"', '', id='only-the-opening-quote'),
+        pytest.param('', '', id='empty'),
+    ],
+)
+def test_strip_quotes(text, expected):
+    assert strip_quotes(text) == expected
+
+
+def test_quoting_a_value_that_arrived_quoted_does_not_quote_it_twice():
+    # the API returns '"Dev Complete"'; written as-is into an expression it would search for a status whose name
+    # includes the quotes, which matches nothing
+    assert quote_if_needed(strip_quotes('"Dev Complete"')) == '"Dev Complete"'
+
+
+@pytest.mark.parametrize(
+    'operator, text_after, expected',
+    [
+        pytest.param('in', '', ('in ()', 4), id='in-opens-a-list'),
+        pytest.param('not in', '', ('not in ()', 8), id='not-in-opens-a-list'),
+        pytest.param('was in', '', ('was in ()', 8), id='was-in-opens-a-list'),
+        pytest.param('was not in', '', ('was not in ()', 12), id='was-not-in-opens-a-list'),
+        pytest.param('IN', '', ('IN ()', 4), id='the-case-does-not-matter'),
+        pytest.param('=', '', ('= ', 2), id='an-equality-does-not-open-a-list'),
+        pytest.param('!=', ' "Dev Complete"', ('!= ', 3), id='an-inequality-does-not-open-a-list'),
+        pytest.param('in', ' (MNHA)', ('in ', 3), id='the-list-is-already-there'),
+    ],
+)
+def test_operator_completion(operator, text_after, expected):
+    assert operator_completion(operator, text_after) == expected
+
+
+@pytest.mark.parametrize(
+    'expression, expected',
+    [
+        pytest.param('project = SB', ('project = SB', None), id='no-order-by'),
+        pytest.param(
+            'project = SB order by key desc',
+            ('project = SB', 'order by key desc'),
+            id='an-order-by-clause',
+        ),
+        pytest.param(
+            'project = SB ORDER BY key',
+            ('project = SB', 'ORDER BY key'),
+            id='the-case-does-not-matter',
+        ),
+        pytest.param(
+            'summary ~ "order by"',
+            ('summary ~ "order by"', None),
+            id='the-words-are-part-of-a-value',
+        ),
+        pytest.param('order by created', ('', 'order by created'), id='only-an-order-by-clause'),
+    ],
+)
+def test_split_order_by(expression, expected):
+    assert split_order_by(expression) == expected
+
+
 ALIASES = {
     ('dev engineers', 'Naga Kiran K - naga@example.com'): '5c017f7dc22785142f67f57b',
     ('dev engineers', 'Ritesh Agrawal - ritesh@example.com'): '6a117f7dc22785142f67f99c',
@@ -339,6 +407,13 @@ def test_resolve_values_does_not_touch_a_field_name_that_matches_an_alias():
 def test_resolve_values_quotes_a_resolved_value_that_needs_it():
     aliases = {('status', 'Doing'): 'In Progress'}
     assert resolve_values('status = Doing', aliases) == 'status = "In Progress"'
+
+
+def test_resolve_values_does_not_quote_a_resolved_value_twice():
+    # an alias recorded before the values were unquoted at the source would otherwise turn the clause into
+    # `status != "\"Dev Complete\""`, which matches no status at all
+    aliases = {('status', 'Dev Complete'): '"Dev Complete"'}
+    assert resolve_values("status != 'Dev Complete'", aliases) == 'status != "Dev Complete"'
 
 
 @pytest.mark.parametrize(

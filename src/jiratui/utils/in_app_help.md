@@ -172,6 +172,10 @@ setting `pre_defined_jql_expressions`. This is a YAML dictionary of expressions.
 field (`j`) and press `ctrl+e` the JQL Editor opens. Here you can write a complex query or, choose one from the
 dropdown.
 
+Your expression is combined with the filters selected above the results table (project, status, assignee, and so on)
+with an `AND`. The expression is kept as a group, so an `or` in it applies only within your own expression and the
+filters still apply to every result.
+
 **Examples**
 
 - Search work items assigned to John Smith

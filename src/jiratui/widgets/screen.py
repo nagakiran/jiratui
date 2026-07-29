@@ -1025,7 +1025,8 @@ class MainScreen(Screen):
         if search_term:
             if use_advance_search:
                 return f'text ~ "{search_term}"'
-            return f'summary ~ "{search_term}" OR description ~ "{search_term}"'
+            # grouped so that the `OR` does not bind more loosely than the criteria this expression is joined to
+            return f'(summary ~ "{search_term}" OR description ~ "{search_term}")'
         elif jql_expression:
             # the expression shows the values the way the user recognises them; the API needs the values it issued
             return resolve_values(jql_expression, jql_value_aliases())

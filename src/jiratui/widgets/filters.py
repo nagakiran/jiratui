@@ -223,7 +223,9 @@ class JQLSearchWidget(Input):
     def watch_expression(self, value: str | None = None) -> None:
         if value and value not in self.value:  # type:ignore[has-type]
             if self.value:  # type:ignore[has-type]
-                self.value = f'{self.value} AND {self._clean_value(value)}'  # type:ignore[has-type]
+                # both expressions are grouped: an `or` in either of them binds more loosely than this `AND`, so
+                # without the parentheses the two would run into each other
+                self.value = f'({self.value}) AND ({self._clean_value(value)})'  # type:ignore[has-type]
             else:
                 self.value = self._clean_value(value)
 

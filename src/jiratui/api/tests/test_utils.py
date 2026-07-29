@@ -44,7 +44,7 @@ def test_build_issue_search_jql_with_parameters_and_jql_query():
     )
     # THEN
     assert result == (
-        'project = "P1" and created >= "2025-12-01" and created <= "2025-12-02" and updated >= "2025-12-03" and updated <= "2025-12-04" and status = "1" and assignee = "1" and type = 2 and q=5'
+        'project = "P1" and created >= "2025-12-01" and created <= "2025-12-02" and updated >= "2025-12-03" and updated <= "2025-12-04" and status = "1" and assignee = "1" and type = 2 and (q=5)'
     )
 
 
@@ -78,7 +78,7 @@ def test_build_issue_search_jql_with_parameters_and_jql_query_with_order():
     )
     # THEN
     assert result == (
-        'project = "P1" and created >= "2025-12-01" and created <= "2025-12-02" and updated >= "2025-12-03" and updated <= "2025-12-04" and status = "1" and assignee = "1" and type = 2 and q=5 order by key asc'
+        'project = "P1" and created >= "2025-12-01" and created <= "2025-12-02" and updated >= "2025-12-03" and updated <= "2025-12-04" and status = "1" and assignee = "1" and type = 2 and (q=5) order by key asc'
     )
 
 
@@ -152,6 +152,35 @@ def test_build_issue_search_jql_with_a_sort_spec_and_a_user_defined_order_by():
     jql = build_issue_search_jql(jql_query=jql_query, order_by=SortSpec(field='created'))
     # THEN
     assert jql == jql_query
+
+
+def test_build_issue_search_jql_groups_a_user_expression_that_uses_or():
+    # without the parentheses the `or` would bind more loosely than the `and` that joins the criteria, and the search
+    # would return items of other projects
+    # WHEN
+    jql = build_issue_search_jql(
+        project_key='SB', jql_query='assignee = currentUser() or labels in MNHA'
+    )
+    # THEN
+    assert jql == 'project = "SB" and (assignee = currentUser() or labels in MNHA)'
+
+
+def test_build_issue_search_jql_keeps_a_user_defined_order_by_at_the_end():
+    # the `ORDER BY` clause cannot stay inside the parentheses; JQL only accepts it at the end of the expression
+    # WHEN
+    jql = build_issue_search_jql(project_key='SB', jql_query='labels in MNHA order by assignee asc')
+    # THEN
+    assert jql == 'project = "SB" and (labels in MNHA) order by assignee asc'
+
+
+def test_build_issue_search_jql_sorts_when_a_value_contains_the_words_order_by():
+    # the words are part of a value, not of a clause, so they do not sort the results
+    # WHEN
+    jql = build_issue_search_jql(
+        jql_query='summary ~ "order by"', order_by=SortSpec(field='created')
+    )
+    # THEN
+    assert jql == 'summary ~ "order by" order by created asc'
 
 
 def test_sort_spec_from_order_by():

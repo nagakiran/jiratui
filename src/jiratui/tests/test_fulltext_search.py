@@ -222,14 +222,14 @@ async def test_dismiss_fulltext_search_screen_with_value(
 @pytest.mark.parametrize(
     'search_term, jql_expression, advanced_search, expected_query',
     [
-        ('text search', None, False, 'summary ~ "text search" OR description ~ "text search"'),
+        ('text search', None, False, '(summary ~ "text search" OR description ~ "text search")'),
         ('text search', None, True, 'text ~ "text search"'),
         ('text search', 'project = 1', True, 'text ~ "text search"'),
         (
             'text search',
             'project = 1',
             False,
-            'summary ~ "text search" OR description ~ "text search"',
+            '(summary ~ "text search" OR description ~ "text search")',
         ),
         (None, None, False, None),
         (None, None, True, None),
