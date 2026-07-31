@@ -16,6 +16,9 @@ binding copies the current selection as a `search_results_columns` snippet for t
 also written to a temporary file, for the terminals that do not let the clipboard escape sequence through.
 - New `^e` key binding in the screens that add a comment and log work: it opens the text in the editor set in
 `text_editor` (which defaults to `$EDITOR`) and writes the result back into the textarea.
+- The list of JQL suggestions, in the JQL Query field and in the JQL Editor, is now navigated with `^n` and `^p` as
+well as with the arrow keys. The keys are only taken while the suggestions are showing; otherwise `^n` still creates
+a work item and `^p` still opens the command palette.
 
 ### Bug Fixes
 

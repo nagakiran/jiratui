@@ -252,6 +252,8 @@ is loaded into the tabs on the right-hand side. Depending on the tab that is act
 | `^k`        | Search Results       | Copies the key of the work item currently selected                        |
 | `^j`        | Search Results       | Copies the URL of the work item currently selected                        |
 | `^e`        | JQL Query field      | Opens the JQL Query Editor                                                |
+| `^n`        | JQL suggestions      | Highlights the next suggestion; only while the suggestions are showing    |
+| `^p`        | JQL suggestions      | Highlights the previous suggestion; only while the suggestions are showing |
 
 Besides the hot-keys above the following are always available.
 
@@ -364,6 +366,21 @@ input field. In addition, you can also define your own JQL query expressions and
 setting `pre_defined_jql_expressions`. This is a YAML dictionary of expressions. When you focus on the JQL Query input
 field (`j`) and press `ctrl+e` the JQL Editor opens. Here you can write a complex query or, choose one from the
 dropdown.
+
+**Suggestions**
+
+Both the JQL Query input field and the JQL Editor suggest the names of the fields, the operators that apply to a
+field, and the values of a field, as you type. While the list of suggestions is showing:
+
+| Key              | Action                             |
+| ---------------- | ---------------------------------- |
+| `down` / `^n`    | Highlights the next suggestion     |
+| `up` / `^p`      | Highlights the previous suggestion |
+| `enter` or `tab` | Inserts the highlighted suggestion |
+| `escape`         | Hides the suggestions              |
+
+`^n` and `^p` only apply while the suggestions are showing; otherwise `^n` creates a work item and `^p` opens the
+command palette, as usual.
 
 **Examples**
 

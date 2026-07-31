@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from pydantic import SecretStr
 import pytest
+from textual.command import CommandPalette
 from textual.widgets import TextArea
 
 from jiratui.api_controller.controller import APIController, APIControllerResponse
@@ -21,6 +22,7 @@ from jiratui.widgets.commons.jql_autocomplete import (
     JQLInputAutoComplete,
     jql_value_aliases,
 )
+from jiratui.widgets.screen import MainScreen
 from jiratui.widgets.screens.jql import JQLEditorScreen
 
 REFERENCE_DATA = JQLAutocompleteData(
@@ -508,6 +510,85 @@ async def test_enter_with_the_dropdown_closed_inserts_a_newline(
 
 
 @pytest.mark.asyncio
+async def test_ctrl_n_and_ctrl_p_move_the_highlight_of_the_dropdown(
+    app, reference_data_mock, suggestions_mock
+):
+    # the dropdown of `textual-autocomplete` recognises the arrow keys only; these are the readline keys
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            _, editor, autocomplete = await open_editor(app, pilot, '"Dev Engineers" in (naga')
+            option_list = autocomplete.option_list
+            assert option_list.option_count == 2
+            option_list.highlighted = 0
+            # WHEN
+            await pilot.press('ctrl+n')
+            await pilot.pause()
+            # THEN
+            assert option_list.highlighted == 1
+            # WHEN the end of the list is passed
+            await pilot.press('ctrl+n')
+            await pilot.pause()
+            # THEN it wraps around
+            assert option_list.highlighted == 0
+            # WHEN
+            await pilot.press('ctrl+p')
+            await pilot.pause()
+            # THEN it wraps around the other way
+            assert option_list.highlighted == 1
+            # and neither key reached the editor
+            assert editor.text == '"Dev Engineers" in (naga'
+
+
+@pytest.mark.asyncio
+async def test_ctrl_n_then_enter_applies_the_suggestion_that_was_highlighted(
+    app, reference_data_mock, suggestions_mock
+):
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            _, editor, autocomplete = await open_editor(app, pilot, '"Dev Engineers" in (naga')
+            autocomplete.option_list.highlighted = 0
+            second_suggestion = dropdown_options(autocomplete)[1]
+            # WHEN
+            await pilot.press('ctrl+n')
+            await pilot.pause()
+            await pilot.press('enter')
+            await pilot.pause()
+            # THEN
+            assert editor.text == f'"Dev Engineers" in ("{second_suggestion}"'
+
+
+@pytest.mark.asyncio
+async def test_ctrl_n_with_the_dropdown_closed_leaves_the_expression_alone(
+    app, reference_data_mock, suggestions_mock
+):
+    # the keys are only claimed while there are suggestions on screen
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            screen, editor, autocomplete = await open_editor(app, pilot, 'project = SB ')
+            assert autocomplete.display is False
+            # WHEN
+            await pilot.press('ctrl+n')
+            await pilot.pause()
+            # THEN the editor is left alone and the key is not claimed
+            assert editor.text == 'project = SB '
+            assert app.screen is screen
+            # WHEN
+            await pilot.press('ctrl+p')
+            await pilot.pause()
+            # THEN it still opens the command palette
+            assert CommandPalette.is_open(app)
+
+
+@pytest.mark.asyncio
 async def test_the_values_of_a_field_are_fetched_once_the_user_stops_typing(
     app, reference_data_mock, suggestions_mock
 ):
@@ -582,3 +663,50 @@ async def test_the_dropdown_of_the_search_bar_is_not_cut_off_by_the_edge_of_the_
             screen_width = app.screen.scrollable_content_region.width
             assert region.x >= 0
             assert region.x + region.width <= screen_width
+
+
+@pytest.mark.asyncio
+async def test_the_dropdown_of_the_search_bar_is_navigated_with_ctrl_n_and_ctrl_p(
+    app, reference_data_mock, suggestions_mock
+):
+    # `ctrl+n` creates a work item and `ctrl+p` opens the command palette; the dropdown only takes them while it is
+    # showing suggestions
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+        patch.object(MainScreen, 'action_create_work_item') as create_work_item,
+    ):
+        async with app.run_test(size=(100, 40)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            jql_input = screen.query_one('#input_search_term')
+            autocomplete = screen.query_one(JQLInputAutoComplete)
+            jql_input.focus()
+            await pilot.pause()
+            jql_input.value = '"Dev Engineers" in (naga'
+            jql_input.cursor_position = len(jql_input.value)
+            await pilot.pause()
+            await pilot.pause(VALUE_QUERY_DEBOUNCE_SECONDS + 0.1)
+            # GIVEN the dropdown is showing suggestions
+            assert autocomplete.display is True
+            autocomplete.option_list.highlighted = 0
+            # WHEN
+            await pilot.press('ctrl+n')
+            await pilot.pause()
+            # THEN the highlight moved, and neither the create-work-item form nor the command palette was opened
+            assert autocomplete.option_list.highlighted == 1
+            create_work_item.assert_not_called()
+            assert app.screen is screen
+            # WHEN
+            await pilot.press('ctrl+p')
+            await pilot.pause()
+            # THEN
+            assert autocomplete.option_list.highlighted == 0
+            assert app.screen is screen
+            # WHEN the dropdown is hidden
+            autocomplete.action_hide()
+            await pilot.pause()
+            await pilot.press('ctrl+n')
+            await pilot.pause()
+            # THEN the key goes back to creating a work item
+            create_work_item.assert_called_once()

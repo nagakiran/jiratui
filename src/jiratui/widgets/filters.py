@@ -1,10 +1,11 @@
 """This module contains the widgets used for the filters of the search functionality used in the main screen."""
 
-from textual import on
+from textual import events, on
 from textual.reactive import Reactive, reactive
 from textual.widgets import Checkbox, Input, Select
 
 from jiratui.widgets.base import DateInput
+from jiratui.widgets.commons.jql_autocomplete import JQLDropdownKeysMixin
 from jiratui.widgets.screens.jql import JQLEditorScreen
 
 
@@ -191,7 +192,7 @@ class ActiveSprintCheckbox(Checkbox):
         return '#search-by-active-sprint'
 
 
-class JQLSearchWidget(Input):
+class JQLSearchWidget(JQLDropdownKeysMixin, Input):
     """An input widget that holds a JQL expression."""
 
     HELP = 'See Searching Using JQL Expressions section in the help'
@@ -219,6 +220,11 @@ class JQLSearchWidget(Input):
     @property
     def help_anchor(self) -> str:
         return '#searching-using-jql-expressions'
+
+    async def _on_key(self, event: events.Key) -> None:
+        if self._claim_navigation_key(event):
+            return
+        await super()._on_key(event)
 
     def watch_expression(self, value: str | None = None) -> None:
         if value and value not in self.value:  # type:ignore[has-type]

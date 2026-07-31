@@ -49,6 +49,14 @@ SUGGESTIONS_WORKER_GROUP = 'jql-suggestions'
 REFERENCE_DATA_WORKER_GROUP = 'jql-reference-data'
 """The group of the workers that load the JQL reference data."""
 
+SUGGESTION_NAVIGATION_KEYS = {'ctrl+n': 1, 'ctrl+p': -1}
+"""The keys that move the highlight of the dropdown, and the direction in which each of them moves it.
+
+The dropdown of `textual-autocomplete` recognises the arrow keys only; these are the readline keys that a terminal
+user reaches for. They are claimed only while the dropdown is displayed, so that `ctrl+n` still creates a work item,
+and `ctrl+p` still opens the command palette, when there are no suggestions on screen.
+"""
+
 _reference_data_lock = asyncio.Lock()
 """Serialises the load of the JQL reference data so that the widgets do not fetch it once each."""
 
@@ -293,6 +301,12 @@ class JQLAutoCompleteMixin:
 
         return context_at(target_state.text, target_state.cursor_position).prefix
 
+    @property
+    def is_open(self) -> bool:
+        """Whether the dropdown is displaying suggestions."""
+
+        return bool(self.display)  # type:ignore[attr-defined]
+
     def complete_highlighted(self) -> None:
         """Applies the suggestion that is currently highlighted in the dropdown.
 
@@ -302,6 +316,24 @@ class JQLAutoCompleteMixin:
 
         option_list = self.option_list  # type:ignore[attr-defined]
         self._complete(option_index=option_list.highlighted or 0)  # type:ignore[attr-defined]
+
+    def move_highlight(self, delta: int) -> bool:
+        """Moves the highlight of the dropdown by `delta` suggestions, wrapping around at both ends.
+
+        Returns:
+            `True` when the dropdown moved its highlight, i.e. when it consumed the key; `False` when the key belongs
+            to whoever else wants it.
+        """
+
+        if not self.is_open:
+            return False
+        option_list = self.option_list  # type:ignore[attr-defined]
+        if not option_list.option_count:
+            return False
+        option_list.highlighted = (
+            (option_list.highlighted or 0) + delta
+        ) % option_list.option_count
+        return True
 
     def _completion_text(self, value: str, text_after: str = '') -> tuple[str, int]:
         """The text to insert in the expression for a selected suggestion, and the cursor position within it."""
@@ -329,6 +361,52 @@ class JQLAutoCompleteMixin:
         return option_list.get_option_at_index(option_list.highlighted).id
 
 
+class JQLDropdownKeysMixin:
+    """Lets a widget that holds a JQL expression claim the keys of its dropdown before acting on them itself.
+
+    ```{important}
+    `AutoComplete` watches the keys of its target through the `message_signal`, which Textual publishes only *after*
+    the target has handled the event and started to bubble it, so a handler on that signal cannot keep a key from
+    reaching the bindings of the screen or of the app. The key has to be claimed here, in the target itself.
+    ```
+    """
+
+    jql_autocomplete: 'JQLAutoCompleteMixin | None' = None
+    """The dropdown attached to this widget; set by the dropdown itself."""
+
+    def _claim_navigation_key(self, event: events.Key) -> bool:
+        """Moves the highlight of the dropdown if the key belongs to it.
+
+        Returns:
+            `True` when the dropdown consumed the key, in which case the widget must not act on it.
+        """
+
+        delta = SUGGESTION_NAVIGATION_KEYS.get(event.key)
+        if delta is None or self.jql_autocomplete is None:
+            return False
+        if not self.jql_autocomplete.move_highlight(delta):
+            return False
+        event.stop()
+        event.prevent_default()
+        return True
+
+    def check_consume_key(self, key: str, character: str | None = None) -> bool:
+        """Claims the keys that navigate the dropdown while it is displayed.
+
+        ```{important}
+        `ctrl+p` opens the command palette through a *priority* binding of the app, which Textual runs before the
+        focused widget sees the key. Declaring the key as consumed is what takes that binding — and the `ctrl+n` of
+        the main screen — out of the binding chain while the dropdown is open; without it the key never reaches
+        `_claim_navigation_key`.
+        ```
+        """
+
+        if key in SUGGESTION_NAVIGATION_KEYS and self.jql_autocomplete is not None:
+            if self.jql_autocomplete.is_open:
+                return True
+        return super().check_consume_key(key, character)  # type:ignore[misc]
+
+
 class JQLInputAutoComplete(JQLAutoCompleteMixin, AutoComplete):
     """Autocompletes the JQL expression typed in an [Input](#textual.widgets.Input)."""
 
@@ -342,6 +420,8 @@ class JQLInputAutoComplete(JQLAutoCompleteMixin, AutoComplete):
 
         self._init_jql(api_controller)
         super().__init__(target=target, candidates=self._get_candidates, **kwargs)  # type:ignore[arg-type]
+        if isinstance(target, JQLDropdownKeysMixin):
+            target.jql_autocomplete = self
 
     def apply_completion(self, value: str, state: TargetState) -> None:
         """Replaces the text that the user is typing with the selected suggestion."""
@@ -355,8 +435,9 @@ class JQLInputAutoComplete(JQLAutoCompleteMixin, AutoComplete):
         target.cursor_position = context.replace_start + offset
 
 
-class JQLTextArea(TextArea):
-    """A [TextArea](#textual.widgets.TextArea) that lets a dropdown claim the keys that select a suggestion.
+class JQLTextArea(JQLDropdownKeysMixin, TextArea):
+    """A [TextArea](#textual.widgets.TextArea) that lets a dropdown claim the keys that navigate and select a
+    suggestion.
 
     ```{important}
     A `TextArea` inserts a newline, or an indent, from within its own key handler. `AutoComplete` watches the keys of
@@ -366,14 +447,11 @@ class JQLTextArea(TextArea):
     ```
     """
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.jql_autocomplete: JQLTextAreaAutoComplete | None = None
-        """The dropdown attached to this editor; set by the dropdown itself."""
-
     async def _on_key(self, event: events.Key) -> None:
+        if self._claim_navigation_key(event):
+            return
         autocomplete = self.jql_autocomplete
-        if autocomplete is not None and autocomplete.display and event.key in ('enter', 'tab'):
+        if autocomplete is not None and autocomplete.is_open and event.key in ('enter', 'tab'):
             event.stop()
             event.prevent_default()
             autocomplete.complete_highlighted()
