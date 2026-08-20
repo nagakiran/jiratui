@@ -12,6 +12,7 @@ from textual.worker import Worker
 
 from jiratui.api_controller.controller import APIController, APIControllerResponse
 from jiratui.models import JiraIssue, JiraIssueSearchResponse, RelatedJiraIssue
+from jiratui.utils.clipboard import copy_to_clipboard
 from jiratui.utils.urls import build_external_url_for_issue
 
 
@@ -93,14 +94,14 @@ class GoToItemsTable(DataTable):
     def action_copy_issue_key(self) -> None:
         """Copy to the clipboard the key of the item."""
         if self.__current_work_item_key:
-            self.app.copy_to_clipboard(self.__current_work_item_key)
+            copy_to_clipboard(self.app, self.__current_work_item_key)
             self.notify('Work item Key copied!')
 
     def action_copy_issue_url(self) -> None:
         """Copy to the clipboard the URL of the item."""
         if self.__current_work_item_key:
             if url := build_external_url_for_issue(self.__current_work_item_key):
-                self.app.copy_to_clipboard(url)
+                copy_to_clipboard(self.app, url)
                 self.notify('Work item URL copied!')
 
 

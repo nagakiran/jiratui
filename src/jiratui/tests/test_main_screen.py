@@ -40,6 +40,8 @@ from jiratui.widgets.related_work_items.related_issues import (
 )
 from jiratui.widgets.remote_links.links import IssueRemoteLinksWidget
 from jiratui.widgets.screen import MainScreen, WorkItemSearchResult
+from jiratui.widgets.screens.columns import ColumnSelectionScreen
+from jiratui.widgets.screens.history import HistoryScreen
 from jiratui.widgets.screens.work_item_quick_view import WorkItemQuickViewScreen
 from jiratui.widgets.search import IssuesSearchResultsTable, SearchResultsContainer
 from jiratui.widgets.work_item_details.details import IssueDetailsWidget
@@ -618,6 +620,103 @@ async def test_copy_work_item_key_to_clipboard_no_item_to_copy(
         # WHEN
         await pilot.press('ctrl+r')
         await pilot.press('ctrl+k')
+        await pilot.app.workers.wait_for_complete()
+        # THEN
+        search_work_items_mock.assert_called_once()
+        copy_to_clipboard.assert_not_called()
+
+
+@patch('jiratui.widgets.screen.MainScreen._fetch_jira_fields')
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
+async def test_f8_opens_the_column_selection_screen(
+    search_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    fetch_jira_fields_mock: AsyncMock,
+    app,
+):
+    fetch_jira_fields_mock.return_value = []
+    async with app.run_test() as pilot:
+        # WHEN
+        await pilot.press('f8')
+        await pilot.pause()
+        # THEN
+        assert isinstance(app.screen, ColumnSelectionScreen)
+
+
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
+async def test_f7_opens_the_recent_history_screen(
+    search_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    app,
+):
+    # f7 used to be bound to both the column selection screen and this one, which made this screen unreachable
+    async with app.run_test() as pilot:
+        # WHEN
+        await pilot.press('f7')
+        await pilot.pause()
+        # THEN
+        assert isinstance(app.screen, HistoryScreen)
+
+
+@patch.object(JiraApp, 'copy_to_clipboard')
+@patch('jiratui.widgets.screen.MainScreen._search_work_items')
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
+async def test_copy_work_item_key_and_summary_to_clipboard(
+    search_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    search_work_items_mock: AsyncMock,
+    copy_to_clipboard: Mock,
+    jira_issues: list[JiraIssue],
+    app,
+):
+    search_work_items_mock.return_value = WorkItemSearchResult(
+        total=1, start=1, end=1, response=JiraIssueSearchResponse(issues=jira_issues)
+    )
+    async with app.run_test() as pilot:
+        cast('MainScreen', app.screen)  # type:ignore[name-defined] # noqa: F821
+        # WHEN
+        await pilot.press('ctrl+r')
+        await pilot.press('ctrl+t')
+        await pilot.app.workers.wait_for_complete()
+        # THEN
+        search_work_items_mock.assert_called_once()
+        copy_to_clipboard.assert_called_once_with('key-1 - abcd')
+
+
+@patch.object(JiraApp, 'copy_to_clipboard')
+@patch('jiratui.widgets.screen.MainScreen._search_work_items')
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
+async def test_copy_work_item_key_and_summary_to_clipboard_no_item_to_copy(
+    search_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    search_work_items_mock: AsyncMock,
+    copy_to_clipboard: Mock,
+    app,
+):
+    search_work_items_mock.return_value = WorkItemSearchResult(
+        total=1, start=1, end=1, response=JiraIssueSearchResponse(issues=[])
+    )
+    async with app.run_test() as pilot:
+        cast('MainScreen', app.screen)  # type:ignore[name-defined] # noqa: F821
+        # WHEN
+        await pilot.press('ctrl+r')
+        await pilot.press('ctrl+t')
         await pilot.app.workers.wait_for_complete()
         # THEN
         search_work_items_mock.assert_called_once()

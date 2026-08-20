@@ -8,6 +8,7 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Rule, Static
 
+from jiratui.utils.clipboard import copy_to_clipboard
 from jiratui.utils.history import HistoryManager
 from jiratui.utils.urls import build_external_url_for_issue
 
@@ -52,11 +53,22 @@ class HistoryWorkItemsTable(DataTable):
             key_display='^j',
             tooltip='Copy URL',
         ),
+        Binding(
+            key='ctrl+t',
+            action='copy_issue_key_and_summary',
+            description='Copy Key+Summary',
+            show=True,
+            key_display='^t',
+            tooltip='Copy as "<key> - <summary>"',
+        ),
     ]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.__current_work_item_key: str | None = None
+        self.summaries_by_key: dict[str, str] = {}
+        """The full summary of every item in the table, by key. The summary rendered in the row is truncated, so it
+        cannot be used to copy the item as `<key> - <summary>`."""
 
     @dataclass
     class WorkItemSelected(Message):
@@ -88,15 +100,22 @@ class HistoryWorkItemsTable(DataTable):
     def action_copy_issue_key(self) -> None:
         """Copy to the clipboard the key of the item."""
         if self.__current_work_item_key:
-            self.app.copy_to_clipboard(self.__current_work_item_key)
+            copy_to_clipboard(self.app, self.__current_work_item_key)
             self.notify('Work item Key copied!')
 
     def action_copy_issue_url(self) -> None:
         """Copy to the clipboard the URL of the item."""
         if self.__current_work_item_key:
             if url := build_external_url_for_issue(self.__current_work_item_key):
-                self.app.copy_to_clipboard(url)
+                copy_to_clipboard(self.app, url)
                 self.notify('Work item URL copied!')
+
+    def action_copy_issue_key_and_summary(self) -> None:
+        """Copy to the clipboard the item as `<key> - <summary>`."""
+        if key := self.__current_work_item_key:
+            summary = self.summaries_by_key.get(key, '').strip()
+            copy_to_clipboard(self.app, f'{key} - {summary}' if summary else key)
+            self.notify('Work item Key and Summary copied!')
 
 
 class HistoryScreen(ModalScreen[str]):
@@ -164,7 +183,9 @@ class HistoryScreen(ModalScreen[str]):
         self._fill_in_table(table)
 
     def _fill_in_table(self, table: HistoryWorkItemsTable) -> None:
+        table.summaries_by_key = {}
         for entry in self.__history_manager.get_history():
+            table.summaries_by_key[entry.key] = entry.summary
             entry_summary = (
                 f'{entry.summary[:65]}...' if len(entry.summary) > 65 else entry.summary or '-'
             )

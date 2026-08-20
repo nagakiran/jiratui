@@ -12,6 +12,7 @@ from textual.widgets import DataTable, Footer, Rule, Static, TabbedContent, TabP
 
 from jiratui.api_controller.controller import APIControllerResponse
 from jiratui.models import JiraWorkItemFields
+from jiratui.utils.clipboard import copy_to_clipboard
 from jiratui.utils.styling import (
     get_style_for_work_item_priority,
     get_style_for_work_item_status,
@@ -102,6 +103,14 @@ class WorkItemQuickViewScreen(ModalScreen[str]):
             tooltip='Copy URL',
         ),
         Binding(
+            key='ctrl+t',
+            action='copy_issue_key_and_summary',
+            description='Copy Key+Summary',
+            show=True,
+            key_display='^t',
+            tooltip='Copy as "<key> - <summary>"',
+        ),
+        Binding(
             key='ctrl+r',
             action='search_work_item',
             description='Search Work Item',
@@ -115,6 +124,9 @@ class WorkItemQuickViewScreen(ModalScreen[str]):
     def __init__(self, work_item_key: str):
         super().__init__()
         self._work_item_key = work_item_key
+        self._work_item_summary: str = ''
+        """The summary of the work item. Set once the item is fetched, so that it can be copied together with the
+        key."""
 
     def compose(self) -> ComposeResult:
         vertical = VerticalScroll()
@@ -150,6 +162,7 @@ class WorkItemQuickViewScreen(ModalScreen[str]):
             self.notify(f'Unable to retrieve the work item with key: {self._work_item_key}')
         elif response.result and (issues := response.result.issues):
             issue = issues[0]
+            self._work_item_summary = issue.summary
             color_style_priority = get_style_for_work_item_priority(issue.priority_name)
             color_style_status = get_style_for_work_item_status(issue.status.name)
             color_style_type = get_style_for_work_item_type(issue.issue_type.name)
@@ -307,15 +320,25 @@ class WorkItemQuickViewScreen(ModalScreen[str]):
     def action_copy_issue_key(self) -> None:
         """Copy to the clipboard the key of the item."""
         if self._work_item_key:
-            self.app.copy_to_clipboard(self._work_item_key)
+            copy_to_clipboard(self.app, self._work_item_key)
             self.notify('Work item Key copied!')
 
     def action_copy_issue_url(self) -> None:
         """Copy to the clipboard the URL of the item."""
         if self._work_item_key:
             if url := build_external_url_for_issue(self._work_item_key):
-                self.app.copy_to_clipboard(url)
+                copy_to_clipboard(self.app, url)
                 self.notify('Work item URL copied!')
+
+    def action_copy_issue_key_and_summary(self) -> None:
+        """Copy to the clipboard the item as `<key> - <summary>`."""
+        if self._work_item_key:
+            summary = self._work_item_summary.strip()
+            copy_to_clipboard(
+                self.app,
+                f'{self._work_item_key} - {summary}' if summary else self._work_item_key,
+            )
+            self.notify('Work item Key and Summary copied!')
 
     def action_search_work_item(self) -> None:
         """Dismisses the screen with the key of the work item being displayed."""

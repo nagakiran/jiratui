@@ -76,6 +76,60 @@ async def test_history_screen_copy_key_no_row_highlighted(app):
         app.copy_to_clipboard.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_history_screen_copy_key_and_summary(app):
+    # GIVEN
+    manager = HistoryManager()
+    manager.add_work_item(
+        HistoryEntry(key='key-1', item_type='task', status='completed', summary='summary 1')
+    )
+    async with app.run_test() as pilot:
+        app.copy_to_clipboard = Mock()
+        # WHEN
+        screen = HistoryScreen(manager)
+        await app.push_screen(screen)
+        await pilot.press('tab')
+        await pilot.press('ctrl+t')
+        # THEN
+        app.copy_to_clipboard.assert_called_once_with('key-1 - summary 1')
+
+
+@pytest.mark.asyncio
+async def test_history_screen_copy_key_and_summary_untruncated(app):
+    # GIVEN: a summary longer than the width of the column that displays it
+    summary = 'a' * 100
+    manager = HistoryManager()
+    manager.add_work_item(
+        HistoryEntry(key='key-1', item_type='task', status='completed', summary=summary)
+    )
+    async with app.run_test() as pilot:
+        app.copy_to_clipboard = Mock()
+        # WHEN
+        screen = HistoryScreen(manager)
+        await app.push_screen(screen)
+        await pilot.press('tab')
+        await pilot.press('ctrl+t')
+        # THEN: the full summary is copied, not the truncated one displayed in the row
+        app.copy_to_clipboard.assert_called_once_with(f'key-1 - {summary}')
+
+
+@pytest.mark.asyncio
+async def test_history_screen_copy_key_and_summary_no_row_highlighted(app):
+    # GIVEN
+    manager = HistoryManager()
+    manager.add_work_item(
+        HistoryEntry(key='key-1', item_type='task', status='completed', summary='summary 1')
+    )
+    async with app.run_test() as pilot:
+        app.copy_to_clipboard = Mock()
+        # WHEN
+        screen = HistoryScreen(manager)
+        await app.push_screen(screen)
+        await pilot.press('ctrl+t')
+        # THEN
+        app.copy_to_clipboard.assert_not_called()
+
+
 @patch('jiratui.widgets.screens.history.build_external_url_for_issue')
 @pytest.mark.asyncio
 async def test_history_screen_copy_url(build_external_url_for_issue_mock: Mock, app):

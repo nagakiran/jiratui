@@ -8,6 +8,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from jiratui.utils.clipboard import copy_to_clipboard
 from jiratui.utils.columns import ColumnSpec, config_snippet_for
 
 SELECTED_MARKER = '[x]'
@@ -243,7 +244,7 @@ class ColumnSelectionScreen(ModalScreen[list[str] | None]):
             self.notify('Select at least one column.', title=self.TITLE, severity='warning')
             return
         snippet = self.config_snippet()
-        self.app.copy_to_clipboard(snippet)
+        copy_to_clipboard(self.app, snippet)
         try:
             with tempfile.NamedTemporaryFile(
                 mode='w',

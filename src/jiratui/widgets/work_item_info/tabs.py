@@ -3,6 +3,7 @@ from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Static, TabbedContent, TabPane
 
+from jiratui.utils.clipboard import copy_to_clipboard
 from jiratui.widgets.commons.adf import ReadOnlyADFMarkdownTextAreaWidget
 from jiratui.widgets.commons.widgets import ReadOnlyPlainTextTextAreaWidget
 
@@ -94,7 +95,7 @@ class InfoTabbedContent(TabbedContent):
             if isinstance(widget, Static):
                 self.notify(f'The field {widget.name} has no content. Press "^e" to edit it.')
             else:
-                self.app.copy_to_clipboard(widget.text_content.strip())
+                copy_to_clipboard(self.app, widget.text_content.strip())
                 self.notify('Content copied!')
 
 

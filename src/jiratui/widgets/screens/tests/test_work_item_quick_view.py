@@ -136,6 +136,61 @@ async def test_action_copy_issue_key_without_work_item_key(mock_configuration, a
 
 @patch.object(APIController, 'get_issue')
 @pytest.mark.asyncio
+async def test_action_copy_issue_key_and_summary(
+    get_issue_mock: AsyncMock, mock_configuration, jira_issues, app
+):
+    # GIVEN
+    get_issue_mock.return_value = APIControllerResponse(
+        result=JiraIssueSearchResponse(issues=jira_issues)
+    )
+    mock_configuration.jira_base_url = 'http://foo.bar'
+    async with app.run_test() as pilot:
+        # WHEN
+        screen = WorkItemQuickViewScreen('key-1')
+        app.copy_to_clipboard = Mock()
+        await app.push_screen(screen)
+        await pilot.pause()
+        screen.action_copy_issue_key_and_summary()
+        # THEN
+        app.copy_to_clipboard.assert_called_once_with('key-1 - abcd')
+
+
+@patch.object(APIController, 'get_issue')
+@pytest.mark.asyncio
+async def test_action_copy_issue_key_and_summary_without_a_summary(
+    get_issue_mock: AsyncMock, mock_configuration, app
+):
+    # GIVEN: the work item could not be fetched, so its summary is not known
+    get_issue_mock.return_value = APIControllerResponse(result=JiraIssueSearchResponse(issues=[]))
+    mock_configuration.jira_base_url = 'http://foo.bar'
+    async with app.run_test() as pilot:
+        # WHEN
+        screen = WorkItemQuickViewScreen('WI-1')
+        app.copy_to_clipboard = Mock()
+        await app.push_screen(screen)
+        await pilot.pause()
+        screen.action_copy_issue_key_and_summary()
+        # THEN: the key alone is copied
+        app.copy_to_clipboard.assert_called_once_with('WI-1')
+
+
+@pytest.mark.asyncio
+async def test_action_copy_issue_key_and_summary_without_work_item_key(mock_configuration, app):
+    # GIVEN
+    mock_configuration.jira_base_url = 'http://foo.bar'
+    async with app.run_test() as pilot:
+        # WHEN
+        screen = WorkItemQuickViewScreen('')
+        app.copy_to_clipboard = Mock()
+        await app.push_screen(screen)
+        await pilot.pause()
+        screen.action_copy_issue_key_and_summary()
+        # THEN
+        app.copy_to_clipboard.assert_not_called()
+
+
+@patch.object(APIController, 'get_issue')
+@pytest.mark.asyncio
 async def test_action_search_work_item_dismiss_screen_with_key(
     get_issue_mock: AsyncMock, mock_configuration, app
 ):

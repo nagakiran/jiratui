@@ -23,6 +23,7 @@ from jiratui.models import (
     SortSpec,
     WorkItemsSearchOrderBy,
 )
+from jiratui.utils.clipboard import copy_to_clipboard
 from jiratui.utils.columns import (
     BUILTIN_COLUMNS,
     ColumnSpec,
@@ -91,6 +92,7 @@ class MainScreen(Screen):
     - handling events for focusing different widgets based on custom key-bindings
     - handling the logic for creating work items
     - handling the logic for copying the key of the currently selected work item
+    - handling the logic for copying the currently selected work item as `<key> - <summary>`
     - handling the logic for copying the url of the currently selected work item
     - handling the logic for creating a local Git branch for the currently selected work item
     - searching Jira users for the assignee input filter
@@ -121,11 +123,11 @@ class MainScreen(Screen):
             tooltip='Search items by search criteria',
         ),
         Binding(
-            key='f7',
+            key='f8',
             action='configure_columns',
             description='Columns',
             show=True,
-            key_display='f7',
+            key_display='f8',
             tooltip='Choose the columns of the search results',
         ),
         Binding(
@@ -284,6 +286,14 @@ class MainScreen(Screen):
             show=True,
             key_display='^j',
             tooltip='Copy the work item URL',
+        ),
+        Binding(
+            key='ctrl+t',
+            action='copy_issue_key_and_summary',
+            description='Copy Key+Summary',
+            show=True,
+            key_display='^t',
+            tooltip='Copy the work item as "<key> - <summary>"',
         ),
         Binding(
             key='ctrl+g',
@@ -1225,14 +1235,30 @@ class MainScreen(Screen):
         """Copy to the clipboard the URL of the item currently selected in the search results."""
         if (table := self.search_results_table) and table.current_work_item_key:
             if url := build_external_url_for_issue(table.current_work_item_key):
-                self.app.copy_to_clipboard(url)
+                copy_to_clipboard(self.app, url)
                 self.notify('Work item URL copied!')
 
     def action_copy_issue_key(self) -> None:
         """Copy to the clipboard the key of the item currently selected in the search results."""
         if (table := self.search_results_table) and table.current_work_item_key:
-            self.app.copy_to_clipboard(self.search_results_table.current_work_item_key)
+            copy_to_clipboard(self.app, self.search_results_table.current_work_item_key)
             self.notify('Work item Key copied!')
+
+    def action_copy_issue_key_and_summary(self) -> None:
+        """Copy to the clipboard the item currently selected in the search results as `<key> - <summary>`.
+
+        This is the form in which a work item is usually referenced outside of Jira; e.g. in a set of notes.
+        """
+
+        if not (table := self.search_results_table) or not table.current_work_item_key:
+            return
+        # the summary rendered by the table is truncated, and the column that displays it may not even be one of the
+        # columns chosen by the user; so the work item itself is the only reliable source of the full summary
+        work_item = table.current_work_item
+        copy_to_clipboard(
+            self.app, work_item.short_title() if work_item else table.current_work_item_key
+        )
+        self.notify('Work item Key and Summary copied!')
 
     def action_create_git_branch(self) -> None:
         """Opens up a modal screen to allow the user to create Git branches."""

@@ -176,7 +176,7 @@ class IssueDetailsWidget(Vertical):
             show=False,
         ),
         Binding(
-            key='ctrl+l, ctrl+t',
+            key='ctrl+l',
             action='view_worklog',
             description='Worklog',
             show=True,

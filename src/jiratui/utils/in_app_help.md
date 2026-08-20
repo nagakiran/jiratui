@@ -41,8 +41,8 @@ is loaded into the tabs on the right-hand side. Depending on the tab that is act
 | `^s`        | Details               | Saves change to a work item                                                |
 | `^k`        | Details               | Copies the key of the work item currently selected                         |
 | `^j`        | Details               | Copies the URL of the work item currently selected                         |
+| `^t`        | Details               | Copies the work item as `<key> - <summary>`                                |
 | `^l`        | Details               | View the work log                                                          |
-| `^t`        | Details               | [DEPRECATED] Log work for a work item. Use `^l` instead.                   |
 | `^f`        | Details               | Add/Remove flag to work items                                              |
 | `d`         | Worklogs              | Delete a work log                                                          |
 | `^o`        | Worklogs              | Open worklog in the browser                                                |
@@ -62,6 +62,7 @@ is loaded into the tabs on the right-hand side. Depending on the tab that is act
 | `alt+left`  | Search Results        | Retrieves the previous page of results. This is only enabled when page > 1 |
 | `^k`        | Search Results        | Copies the key of the work item currently selected                         |
 | `^j`        | Search Results        | Copies the URL of the work item currently selected                         |
+| `^t`        | Search Results        | Copies the work item as `<key> - <summary>`                                |
 | `^e`        | JQL Query field       | Opens the JQL Query Editor                                                 |
 | `^n`        | JQL suggestions       | Highlights the next suggestion; only while the suggestions are showing     |
 | `^p`        | JQL suggestions       | Highlights the previous suggestion; only while the suggestions are showing |
@@ -77,8 +78,11 @@ Besides the hot-keys above the following are always available.
 | `f1`     | Shows this help                                                                                |
 | `f2`     | Shows server information                                                                       |
 | `f3`     | Shows the currently loaded settings                                                            |
+| `f7`     | Shows the recently viewed, created or updated work items                                       |
+| `f8`     | Chooses the columns of the search results                                                      |
 | `^k`     | Copy to the clipboard the key of the item currently selected/highlighted in the search results |
 | `^j`     | Copy to the clipboard the URL of the item currently selected/highlighted in the search results |
+| `^t`     | Copy to the clipboard the item currently selected/highlighted as `<key> - <summary>`           |
 
 All these bindings above are always displayed at the bottom of the app depending on the component you are focus on.
 
@@ -431,6 +435,7 @@ can do the following:
 - press `^o` to open the item in the browser.
 - press `^k` to copy the item's key to the clipboard.
 - press `^j` to copy the item's URL to the clipboard.
+- press `^t` to copy the item to the clipboard as `<key> - <summary>`.
 
 In addition to this, if you select an item from the tables by pressing `enter` on it JiraTUI will close the screen and
 fetch the details of the select item. This gives you a quick way to navigate through related items.
@@ -449,6 +454,7 @@ can do the following:
 - press `^o` to open the item in the browser.
 - press `^k` to copy the item's key to the clipboard.
 - press `^j` to copy the item's URL to the clipboard.
+- press `^t` to copy the item to the clipboard as `<key> - <summary>`.
 
 In addition to this, if you select an item from the tables by pressing `enter` on it JiraTUI will close the screen and
 fetch the details of the select item. This gives you a quick way to navigate through related items.

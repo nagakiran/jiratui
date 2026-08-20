@@ -750,6 +750,74 @@ async def test_search_results_table_keeps_the_row_keys(
 @patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
 @patch('jiratui.widgets.screen.MainScreen.fetch_projects')
 @pytest.mark.asyncio
+async def test_search_results_table_current_work_item(
+    search_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    search_issues_mock: AsyncMock,
+    app,
+    jira_issues,
+):
+    async with app.run_test():
+        # GIVEN
+        main_screen = cast('MainScreen', app.screen)  # type:ignore[name-defined] # noqa: F821
+        table = main_screen.search_results_table
+        table.search_results = JiraIssueSearchResponse(issues=jira_issues)
+        # WHEN
+        table.current_work_item_key = 'key-2'
+        # THEN
+        assert table.current_work_item is jira_issues[1]
+
+
+@patch('jiratui.widgets.screen.MainScreen.search_issues')
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
+async def test_search_results_table_current_work_item_not_in_the_results(
+    search_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    search_issues_mock: AsyncMock,
+    app,
+    jira_issues,
+):
+    async with app.run_test():
+        # GIVEN
+        main_screen = cast('MainScreen', app.screen)  # type:ignore[name-defined] # noqa: F821
+        table = main_screen.search_results_table
+        table.search_results = JiraIssueSearchResponse(issues=jira_issues)
+        # WHEN
+        table.current_work_item_key = 'key-3'
+        # THEN
+        assert table.current_work_item is None
+
+
+@patch('jiratui.widgets.screen.MainScreen.search_issues')
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
+async def test_search_results_table_current_work_item_without_results(
+    search_projects_mock: AsyncMock,
+    fetch_issue_types_mock: AsyncMock,
+    fetch_statuses_mock: AsyncMock,
+    search_issues_mock: AsyncMock,
+    app,
+):
+    async with app.run_test():
+        # GIVEN
+        main_screen = cast('MainScreen', app.screen)  # type:ignore[name-defined] # noqa: F821
+        table = main_screen.search_results_table
+        # THEN
+        assert table.current_work_item is None
+
+
+@patch('jiratui.widgets.screen.MainScreen.search_issues')
+@patch('jiratui.widgets.screen.MainScreen.fetch_statuses')
+@patch('jiratui.widgets.screen.MainScreen.fetch_issue_types')
+@patch('jiratui.widgets.screen.MainScreen.fetch_projects')
+@pytest.mark.asyncio
 async def test_search_results_table_renders_a_custom_field_column(
     search_projects_mock: AsyncMock,
     fetch_issue_types_mock: AsyncMock,

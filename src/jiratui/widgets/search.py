@@ -261,6 +261,25 @@ class IssuesSearchResultsTable(DataTable):
         """The id of the column that the results are sorted by. Kept so the header of the column can display the
         direction of the sorting after the table is rebuilt."""
 
+    @property
+    def current_work_item(self) -> JiraIssue | None:
+        """The work item that the cursor is on.
+
+        The table stores the key of the work item, not the work item itself, so it is looked up among the results
+        currently displayed. This is the only reliable source of the full summary of the item: the summary rendered in
+        the row is truncated, and the column that displays it may not be one of the columns chosen by the user.
+
+        Returns:
+            The work item that the cursor is on; or `None` when the results do not contain it.
+        """
+
+        if not self.current_work_item_key or not self.search_results:
+            return None
+        for issue in self.search_results.issues or []:
+            if issue.key == self.current_work_item_key:
+                return issue
+        return None
+
     def set_initial_results_set(self, data: JiraIssueSearchResponse | None = None):
         self._initial_results_set = data
 

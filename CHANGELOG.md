@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `search_results_columns` now accepts the name of a field, not only its id; e.g. `Fix-ETA` and `Fix-ETA[Date]` both
 resolve to `customfield_10109`. Names are matched case-insensitively against the fields of the Jira instance.
-- The screen that configures the columns (`f7`) displays the id of every column next to its name, and a new `^y` key
+- The screen that configures the columns (`f8`) displays the id of every column next to its name, and a new `^y` key
 binding copies the current selection as a `search_results_columns` snippet for the configuration file. The snippet is
 also written to a temporary file, for the terminals that do not let the clipboard escape sequence through.
 - New `^e` key binding in the screens that add a comment and log work: it opens the text in the editor set in
@@ -19,9 +19,22 @@ also written to a temporary file, for the terminals that do not let the clipboar
 - The list of JQL suggestions, in the JQL Query field and in the JQL Editor, is now navigated with `^n` and `^p` as
 well as with the arrow keys. The keys are only taken while the suggestions are showing; otherwise `^n` still creates
 a work item and `^p` still opens the command palette.
+- New `^t` key binding that copies the work item currently selected as `<key> - <summary>`; the form in which an item
+is usually referenced outside of Jira, e.g. in a set of notes. It is available in the search results, in the screen
+that shows the recently viewed items and in the quick view of a work item. The summary copied is the full one, even
+when the column that displays it is truncated or is not one of the columns on display.
+- **REMOVED**: `^t` no longer opens the work log of an item; use `^l`, as announced when `^t` was deprecated in 1.10.0.
 
 ### Bug Fixes
 
+- Copying to the clipboard now works in the terminals that do not let the escape sequence through. The text was only
+handed to the terminal as an OSC 52 escape sequence, which needs support from the terminal and from every multiplexer
+in between; e.g. `tmux` drops it unless `set-clipboard` is enabled, and macOS Terminal.app never supports it, so `^k`
+and `^j` reported "copied!" while the clipboard was left untouched. The text is now also piped to the clipboard tool
+of the operating system (`pbcopy`, `wl-copy`, `xclip`, `xsel` or `clip`), while the escape sequence is still written
+for the sessions that run on a remote host.
+- `f7` opens the screen that shows the recently viewed items again. The screen that configures the columns had been
+given the same key, and, being declared first, it took every `f7` press; it now uses `f8`.
 - A clause whose value was suggested by the autocomplete no longer matches nothing. The API returns the values of a
 field the way they would be written in an expression, so a value that needs quoting arrives already quoted; the app
 quoted it a second time, turning e.g. `status != 'Dev Complete'` into `status != "\"Dev Complete\""`, which matches no
