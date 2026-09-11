@@ -14,6 +14,8 @@ from dataclasses import dataclass, replace
 import re
 from typing import TYPE_CHECKING, Any
 
+from jiratui.utils.jql import strip_quotes
+
 if TYPE_CHECKING:
     from jiratui.models import JiraField, JiraIssue
 
@@ -231,6 +233,32 @@ def field_name_without_type(value: str) -> str:
     return TYPE_HINT_PATTERN.sub('', value).strip()
 
 
+CUSTOM_FIELD_REFERENCE_PATTERN = re.compile(r'^cf\[(\d+)]$', re.IGNORECASE)
+"""The way a JQL expression refers to a custom field. E.g.: `cf[10109]`."""
+
+
+def custom_field_id(reference: str | None) -> str | None:
+    """The id of the custom field that a JQL reference points at.
+
+    The JQL auto-complete data refers to a custom field as `cf[10109]`, while the fields of the API — and therefore
+    the ids of the columns — spell the same field `customfield_10109`. The two have to be brought to the same form
+    before they can be compared.
+
+    Args:
+        reference: a reference to a custom field, as it appears in the JQL auto-complete data.
+
+    Returns:
+        The id of the field; the reference unchanged when it is not a `cf[...]` reference, and `None` when there is no
+        reference at all.
+    """
+
+    if not reference:
+        return None
+    if match := CUSTOM_FIELD_REFERENCE_PATTERN.match(reference.strip()):
+        return f'customfield_{match.group(1)}'
+    return reference
+
+
 def resolve_columns(
     ids: Sequence[str],
     jira_fields: Sequence['JiraField'] | None = None,
@@ -370,9 +398,17 @@ def sortable_field_for(column: ColumnSpec, jql_fields: Sequence[Any] | None = No
 
     if column.sortable_jql_field:
         return column.sortable_jql_field
+    label = (column.label or '').strip().lower()
     for jql_field in jql_fields or []:
-        if jql_field.cfid and jql_field.cfid == column.id and jql_field.orderable:
+        if not jql_field.orderable:
+            continue
+        # the auto-complete data spells a custom field `cf[10109]` and a column spells it `customfield_10109`
+        if custom_field_id(jql_field.cfid) == column.id:
             return jql_field.value
-        if jql_field.value == column.id and jql_field.orderable:
+        if jql_field.value == column.id:
+            return jql_field.value
+        # the column may have been configured by name; the API quotes a name that needs quoting, and the name of the
+        # column never carries those quotes
+        if label and strip_quotes(jql_field.value).lower() == label:
             return jql_field.value
     return None

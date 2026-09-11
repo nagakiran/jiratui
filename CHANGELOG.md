@@ -48,6 +48,10 @@ which answers with nothing for it; the id of the field (e.g. `cf[10343]`) is now
 unquoted name otherwise.
 - A value holding an apostrophe, e.g. `Won't`, is now quoted when it is written into an expression. It used to be
 written as-is, which left the expression invalid.
+- The results can be sorted by a custom column again; e.g. a `Fix-ETA` column reported "The results cannot be sorted
+by Fix-ETA". The JQL reference data spells a custom field `cf[10109]` while a column spells the same field
+`customfield_10109`, and the two were compared without bringing them to the same form, so no custom column ever
+matched. A column configured by name is now also matched against the name of the field.
 
 - Copying to the clipboard now works in the terminals that do not let the escape sequence through. The text was only
 handed to the terminal as an OSC 52 escape sequence, which needs support from the terminal and from every multiplexer

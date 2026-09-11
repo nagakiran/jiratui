@@ -10,6 +10,7 @@ from jiratui.utils.columns import (
     api_fields_for,
     column_ids_from_config,
     config_snippet_for,
+    custom_field_id,
     fixed_width_of,
     resolve_columns,
     sortable_field_for,
@@ -177,22 +178,63 @@ def test_index_column_cannot_be_sorted():
     assert sortable_field_for(resolve_columns(['index'])[0]) is None
 
 
+@pytest.mark.parametrize(
+    'reference, expected',
+    [
+        pytest.param('cf[10109]', 'customfield_10109', id='a-jql-reference'),
+        pytest.param('CF[10109]', 'customfield_10109', id='case-does-not-matter'),
+        pytest.param('customfield_10109', 'customfield_10109', id='already-an-id'),
+        pytest.param('status', 'status', id='not-a-custom-field'),
+        pytest.param(None, None, id='no-reference'),
+    ],
+)
+def test_custom_field_id(reference, expected):
+    assert custom_field_id(reference) == expected
+
+
 def test_sortable_field_for_an_orderable_custom_field():
-    column = resolve_columns(['customfield_10343'])[0]
+    # the API spells the field `cf[10109]` and gives its name unquoted when the name needs no quotes; the column
+    # spells the same field `customfield_10109`
+    column = resolve_columns(
+        ['customfield_10109'], [build_jira_field('customfield_10109', 'Fix-ETA')]
+    )[0]
     jql_fields = [
         JQLFieldRef(
-            value='cf[10343]',
-            display_name='Dev Engineers',
+            value='Fix-ETA',
+            display_name='Fix-ETA - cf[10109]',
             orderable=True,
-            cfid='customfield_10343',
+            cfid='cf[10109]',
         )
     ]
-    assert sortable_field_for(column, jql_fields) == 'cf[10343]'
+    assert sortable_field_for(column, jql_fields) == 'Fix-ETA'
+
+
+def test_sortable_field_for_a_custom_field_whose_name_the_api_quotes():
+    # the name goes into the ORDER BY clause as the API spelled it, quotes included
+    column = resolve_columns(
+        ['customfield_10343'], [build_jira_field('customfield_10343', 'Dev Engineers')]
+    )[0]
+    jql_fields = [
+        JQLFieldRef(
+            value='"Dev Engineers"',
+            display_name='Dev Engineers - cf[10343]',
+            orderable=True,
+            cfid='cf[10343]',
+        )
+    ]
+    assert sortable_field_for(column, jql_fields) == '"Dev Engineers"'
+
+
+def test_sortable_field_for_a_column_configured_by_name():
+    # a column configured by name resolves to a field that the JQL data may only know by name
+    column = resolve_columns(['Fix-ETA'], [build_jira_field('customfield_10109', 'Fix-ETA')])[0]
+    jql_fields = [JQLFieldRef(value='Fix-ETA', orderable=True)]
+    assert sortable_field_for(column, jql_fields) == 'Fix-ETA'
 
 
 def test_a_custom_field_that_is_not_orderable_cannot_be_sorted():
     column = resolve_columns(['customfield_10343'])[0]
-    jql_fields = [JQLFieldRef(value='cf[10343]', orderable=False, cfid='customfield_10343')]
+    jql_fields = [JQLFieldRef(value='"Dev Engineers"', orderable=False, cfid='cf[10343]')]
     assert sortable_field_for(column, jql_fields) is None
 
 
