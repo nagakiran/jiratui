@@ -76,6 +76,27 @@ pre_defined_jql_expressions:
     }
 ```
 
+### Saving an Expression from the Editor
+
+Expressions can also be saved from the JQL Expression Editor itself: `^s` asks for a name and keeps the expression in
+a file named `saved_jql.yaml`, next to the configuration file in use. Those expressions are offered by the dropdown of
+the editor alongside the ones of `pre_defined_jql_expressions`, marked with a `★`, and `^d` deletes the selected one.
+Saving under a name that is already taken replaces that expression.
+
+The file is written by the application, and holds the same shape as `pre_defined_jql_expressions` under a
+`saved_jql_expressions` key:
+
+```yaml
+saved_jql_expressions:
+  my-unresolved-bugs:
+    label: My unresolved bugs
+    expression: type = Bug AND resolution = Unresolved AND assignee = currentUser()
+```
+
+The configuration file is never rewritten, so the expressions written there by hand, and their comments, are left as
+they are. Only the expressions saved from the editor can be deleted from the editor. Edit `saved_jql.yaml` by hand
+while the application is not running; a file that cannot be read is ignored, and reported in the log.
+
 ## Fetching Only Projects on Startup
 
 When this setting is `True` the application will only load the list of available projects at startup. The list of

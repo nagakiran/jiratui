@@ -10,6 +10,8 @@ show_issue_web_links: True
 default_project_key_or_id: 'MY-PROJECT-KEY'
 ignore_users_without_email: True
 custom_field_id_sprint: 'customfield_<MY-PROJECT-SPRINT-FIELD-ID>'
+# the expressions offered by the JQL Expression Editor. The editor also saves expressions of its own, with `^s`, in a
+# file named `saved_jql.yaml` next to this one; this file is never rewritten by the app
 pre_defined_jql_expressions:
   1:
     label: "Work in the current sprint"

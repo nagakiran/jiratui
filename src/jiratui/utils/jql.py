@@ -574,7 +574,7 @@ def quote_if_needed(value: str) -> str:
     if value.endswith('()'):
         # a function; e.g.: currentUser()
         return value
-    if any(character in value for character in ' ",()[]{}'):
+    if any(character in value for character in ' "\',()[]{}'):
         escaped = value.replace('"', '\\"')
         return f'"{escaped}"'
     return value

@@ -6,5 +6,7 @@ ATTACHMENT_MAXIMUM_FILE_SIZE_IN_BYTES = 10485760  # 10MB
 Jira."""
 LOGGER_NAME = 'jiratui'
 LOG_FILE_FILE_NAME = 'jiratui.log'
+SAVED_JQL_FILE_NAME = 'saved_jql.yaml'
+"""The file that holds the JQL expressions saved from the JQL expression editor."""
 DEFAULT_JIRA_API_VERSION = 3
 FULL_TEXT_SEARCH_DEFAULT_MINIMUM_TERM_LENGTH = 3

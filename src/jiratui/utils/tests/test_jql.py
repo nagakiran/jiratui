@@ -277,6 +277,8 @@ def test_negative_cursor_is_clamped():
         pytest.param('a,b', '"a,b"', id='contains-a-comma'),
         pytest.param('currentUser()', 'currentUser()', id='a-function-is-not-quoted'),
         pytest.param('say "hi"', '"say \\"hi\\""', id='escapes-quotes'),
+        pytest.param("Won't", '"Won\'t"', id='contains-an-apostrophe'),
+        pytest.param("Won't Fix", '"Won\'t Fix"', id='an-apostrophe-and-a-space'),
         pytest.param('', '', id='empty'),
     ],
 )

@@ -24,8 +24,30 @@ is usually referenced outside of Jira, e.g. in a set of notes. It is available i
 that shows the recently viewed items and in the quick view of a work item. The summary copied is the full one, even
 when the column that displays it is truncated or is not one of the columns on display.
 - **REMOVED**: `^t` no longer opens the work log of an item; use `^l`, as announced when `^t` was deprecated in 1.10.0.
+- New `^e` key binding in the JQL Editor: it writes the expression with the editor set in `text_editor` (which
+defaults to `$EDITOR`), on a file with a `.jql` suffix, and writes the result back into the editor.
+- New `^s` key binding in the JQL Editor: it asks for a name and saves the expression, so that it can be picked from
+the dropdown of the editor the next time. Saved expressions are kept in `saved_jql.yaml`, next to the configuration
+file, and are offered alongside the ones of `pre_defined_jql_expressions`, marked with a `★`; `^d` deletes the
+selected one. The configuration file is never rewritten, so the expressions written there by hand, and their
+comments, are left untouched.
+- The values of a field are now suggested as soon as the field is in scope, before anything is typed, the way the
+Jira web UI does it; e.g. `"Dev Complete Reason" in (` lists every reason. Two characters used to be needed first.
 
 ### Bug Fixes
+
+- The JQL suggestions no longer break a field whose name Jira returns quoted, which is every custom field whose name
+holds a space. Selecting e.g. `Dev Complete Reason` wrote `"\"Dev Complete Reason\""` into the expression, because
+the name arrives from the API already spelled the way an expression needs it and the app quoted it a second time. The
+name is now written as it arrived, which also leaves alone the fields that Jira does *not* resolve once they are
+quoted, such as `development[builds].failing`.
+- The operators of a field whose name Jira returns quoted are suggested again. The reference data was looked up by the
+quoted name while the expression holds the name unquoted, so no custom field with a space in its name ever matched.
+- The values of a field whose name Jira returns quoted are suggested again. The quoted name was passed to the API,
+which answers with nothing for it; the id of the field (e.g. `cf[10343]`) is now used when there is one, and the
+unquoted name otherwise.
+- A value holding an apostrophe, e.g. `Won't`, is now quoted when it is written into an expression. It used to be
+written as-is, which left the expression invalid.
 
 - Copying to the clipboard now works in the terminals that do not let the escape sequence through. The text was only
 handed to the terminal as an OSC 52 escape sequence, which needs support from the terminal and from every multiplexer
@@ -35,6 +57,9 @@ of the operating system (`pbcopy`, `wl-copy`, `xclip`, `xsel` or `clip`), while 
 for the sessions that run on a remote host.
 - `f7` opens the screen that shows the recently viewed items again. The screen that configures the columns had been
 given the same key, and, being declared first, it took every `f7` press; it now uses `f8`.
+- The screen that shows the recently viewed items now opens with the list focused, so the arrow keys, `enter` and the
+key bindings of the list work straight away and show up in the footer. The scrollable container around the list used
+to take the focus, which left the screen looking inert until the user pressed `tab`.
 - A clause whose value was suggested by the autocomplete no longer matches nothing. The API returns the values of a
 field the way they would be written in an expression, so a value that needs quoting arrives already quoted; the app
 quoted it a second time, turning e.g. `status != 'Dev Complete'` into `status != "\"Dev Complete\""`, which matches no

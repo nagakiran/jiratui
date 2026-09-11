@@ -1522,3 +1522,15 @@ ColumnSelectionScreen {
     height: auto;
     max-height: 20;
 }
+
+/* Screen to name a JQL expression before saving it */
+NameJQLExpressionScreen {
+    align: center middle;
+}
+NameJQLExpressionScreen > Input {
+    padding: 1 1 0 1;
+    width: 50%;
+    height: 5;
+    border: round $primary;
+    background: transparent;
+}

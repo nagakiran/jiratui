@@ -58,6 +58,7 @@ def config_for_testing() -> ApplicationConfiguration:
         enable_goto=False,
         search_results_columns=list(DEFAULT_COLUMNS),
         search_results_column_widths=None,
+        text_editor='vim',
     )
     return config_mock
 
@@ -190,6 +191,7 @@ def app() -> JiraApp:
         show_keybinding_hints=False,
         enable_recent_history=False,
         enable_goto=False,
+        text_editor='vim',
     )
     app = JiraApp(config_mock)
     app.api = APIController(config_mock)

@@ -34,8 +34,13 @@ from jiratui.utils.session import ApplicationSession
 
 logger = logging.getLogger(LOGGER_NAME)
 
-MINIMUM_VALUE_QUERY_LENGTH = 2
-"""The number of characters that the user needs to type before the values of a field are fetched from the API."""
+MINIMUM_VALUE_QUERY_LENGTH = 0
+"""The number of characters that the user needs to type before the values of a field are fetched from the API.
+
+The Jira web UI lists the values of a field as soon as the field is in scope, before anything is typed, and the API
+answers with every value when no partial value is passed to it. The debounce below, and the exclusive worker that runs
+the query, are what keep that from turning into a request per keystroke.
+"""
 
 MAXIMUM_SUGGESTIONS = 50
 """The number of suggestions displayed at once."""
@@ -101,6 +106,34 @@ class JQLAutoCompleteMixin:
         return ApplicationSession().get('jql_fields') or []
 
     @property
+    def _jql_field_index(self) -> dict[str, JQLFieldRef]:
+        """The fields of the reference data, keyed by the names that an expression may refer to them by.
+
+        The API returns the name of a field the way it would be written in an expression, so a name that needs
+        quoting arrives quoted; the tokenizer hands back the name of a field without its quotes, so the index is
+        keyed by the unquoted name. The display name is indexed as well, because that is the name that the user
+        recognises.
+        """
+
+        session = ApplicationSession()
+        index: dict[str, JQLFieldRef] | None = session.get('jql_field_index')
+        if index is None:
+            index = {}
+            for jql_field in self._jql_fields:
+                index.setdefault(strip_quotes(jql_field.value).lower(), jql_field)
+                if jql_field.display_name:
+                    index.setdefault(jql_field.display_name.lower(), jql_field)
+            session.jql_field_index = index
+        return index
+
+    def _field_ref(self, name: str | None) -> JQLFieldRef | None:
+        """The entry of the reference data that a name refers to; `None` when the name is not a known field."""
+
+        if not name:
+            return None
+        return self._jql_field_index.get(strip_quotes(name).lower())
+
+    @property
     def _jql_functions(self) -> list[JQLFieldRef]:
         return ApplicationSession().get('jql_functions') or []
 
@@ -125,11 +158,13 @@ class JQLAutoCompleteMixin:
             if response.success and response.result:
                 session.jql_fields = response.result.visible_field_names
                 session.jql_functions = response.result.visible_function_names
+                session.jql_field_index = None
             else:
                 # the app degrades to suggesting only the values of the fields
                 logger.debug('Unable to load the JQL autocomplete data')
                 session.jql_fields = []
                 session.jql_functions = []
+                session.jql_field_index = None
 
     def _get_candidates(self, target_state: TargetState) -> list[DropdownItem]:
         context = context_at(target_state.text, target_state.cursor_position)
@@ -220,21 +255,18 @@ class JQLAutoCompleteMixin:
         prefix = prefix.lower()
         items: list[DropdownItem] = []
         for jql_field in self._jql_fields:
-            display = jql_field.display_name or jql_field.value
-            if prefix and prefix not in display.lower() and prefix not in jql_field.value.lower():
+            # the API returns the name of a field the way it would be written in an expression, so a name that needs
+            # quoting arrives quoted; the quotes are noise in the dropdown, but the expression needs them back
+            name = strip_quotes(jql_field.value)
+            display = jql_field.display_name or name
+            if prefix and prefix not in display.lower() and prefix not in name.lower():
                 continue
-            items.append(DropdownItem(main=jql_field.value, id=jql_field.value))
+            items.append(DropdownItem(main=name, id=jql_field.value))
         return items[:MAXIMUM_SUGGESTIONS]
 
     def _operator_suggestions(self, context: JQLCursorContext) -> list[DropdownItem]:
-        operators: list[str] = []
-        for jql_field in self._jql_fields:
-            if context.field and jql_field.value.lower() == context.field.lower():
-                operators = list(jql_field.operators)
-                break
-            if context.field and (jql_field.display_name or '').lower() == context.field.lower():
-                operators = list(jql_field.operators)
-                break
+        jql_field = self._field_ref(context.field)
+        operators: list[str] = list(jql_field.operators) if jql_field else []
         prefix = context.prefix.lower()
         return [
             DropdownItem(main=operator, id=operator)
@@ -259,9 +291,13 @@ class JQLAutoCompleteMixin:
     async def _value_suggestions(self, context: JQLCursorContext) -> list[DropdownItem]:
         if not context.field or len(context.prefix) < MINIMUM_VALUE_QUERY_LENGTH:
             return []
+        jql_field = self._field_ref(context.field)
+        # the API rejects a field name that arrives quoted, and it answers for the id of a custom field, which is not
+        # ambiguous the way a name shared by two fields is
+        field_name = jql_field.cfid if jql_field and jql_field.cfid else strip_quotes(context.field)
         response: APIControllerResponse = (
             await self._api_controller.get_jql_autocomplete_suggestions(
-                field_name=context.field, field_value=context.prefix
+                field_name=field_name, field_value=context.prefix
             )
         )
         if not response.success or not response.result:
@@ -342,13 +378,17 @@ class JQLAutoCompleteMixin:
         option_id = self._selected_option_id() or value
         if context is None:
             return option_id, len(option_id)
-        if context.context in (JQLContext.VALUE, JQLContext.FIELD):
+        if context.context is JQLContext.FIELD:
+            # the API returns the name of a field the way it would be written in an expression: quoted when it needs
+            # quoting, and bare when it must not be quoted -- `development[builds].failing` is a field that Jira does
+            # not resolve once it is quoted. So the name is written as it arrived, and the operator that follows it
+            # gets the space that the user would otherwise type
+            text = f'{option_id} '
+            return text, len(text)
+        if context.context is JQLContext.VALUE:
             # a quoted value is replaced along with its quotes, so the suggestion is quoted whether the user typed the
             # opening quote or not
             text = quote_if_needed(option_id)
-            if context.context is JQLContext.FIELD:
-                # the operator follows the field, so the user does not need to type the space
-                text = f'{text} '
             return text, len(text)
         if context.context is JQLContext.OPERATOR:
             return operator_completion(option_id, text_after)

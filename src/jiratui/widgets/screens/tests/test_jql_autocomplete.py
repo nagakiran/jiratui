@@ -32,9 +32,14 @@ REFERENCE_DATA = JQLAutocompleteData(
         ),
         JQLFieldRef(
             value='"Dev Engineers"',
-            display_name='Dev Engineers',
+            display_name='Dev Engineers - cf[10343]',
             operators=['=', 'in'],
-            cfid='customfield_10343',
+            cfid='cf[10343]',
+        ),
+        JQLFieldRef(
+            value='development[builds].failing',
+            display_name='development - development[builds].failing',
+            operators=['>', '<'],
         ),
     ],
     visible_function_names=[JQLFieldRef(value='currentUser()')],
@@ -188,7 +193,7 @@ async def test_the_values_of_a_field_are_fetched_from_the_api(
                 'Hegde, Nagaraja - hnagaraja@juniper.net',
             ]
             assert suggestions_mock.await_args.kwargs == {
-                'field_name': 'Dev Engineers',
+                'field_name': 'cf[10343]',
                 'field_value': 'naga',
             }
 
@@ -235,6 +240,83 @@ async def test_applying_a_field_appends_a_space(app, reference_data_mock, sugges
             autocomplete.apply_completion('project', autocomplete._get_target_state())
             await pilot.pause()
             assert editor.text == 'project '
+
+
+@pytest.mark.asyncio
+async def test_applying_a_field_whose_name_the_api_quotes_does_not_quote_it_again(
+    app, reference_data_mock, suggestions_mock
+):
+    # the API returns the name of a field the way it would be written in an expression, so a name that needs quoting
+    # arrives quoted; quoting it again escapes the quotes that arrived and Jira stops resolving the field
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            # a field is matched on any part of its name, so the quoted name is reached without typing the quote
+            _, editor, autocomplete = await open_editor(app, pilot, 'Engineer')
+            assert dropdown_options(autocomplete) == ['Dev Engineers']
+            # WHEN
+            autocomplete.option_list.highlighted = 0
+            autocomplete.apply_completion('Dev Engineers', autocomplete._get_target_state())
+            await pilot.pause()
+            # THEN
+            assert editor.text == '"Dev Engineers" '
+
+
+@pytest.mark.asyncio
+async def test_applying_a_field_whose_name_the_api_leaves_bare_does_not_quote_it(
+    app, reference_data_mock, suggestions_mock
+):
+    # Jira does not resolve `development[builds].failing` once it is quoted, and the API returns it bare for that
+    # reason; the brackets would otherwise make the app quote it
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            _, editor, autocomplete = await open_editor(app, pilot, 'development[')
+            # WHEN
+            autocomplete.option_list.highlighted = 0
+            autocomplete.apply_completion(
+                'development[builds].failing', autocomplete._get_target_state()
+            )
+            await pilot.pause()
+            # THEN
+            assert editor.text == 'development[builds].failing '
+
+
+@pytest.mark.asyncio
+async def test_operators_are_suggested_for_a_field_whose_name_the_api_quotes(
+    app, reference_data_mock, suggestions_mock
+):
+    # the tokenizer hands back the name of a field without its quotes, so the reference data has to be looked up by
+    # the unquoted name; otherwise a custom field never matches and gets no operators
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            _, _, autocomplete = await open_editor(app, pilot, '"Dev Engineers" ')
+            assert dropdown_options(autocomplete) == ['=', 'in']
+            suggestions_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_values_of_a_field_without_an_id_are_asked_for_by_name(
+    app, reference_data_mock, suggestions_mock
+):
+    # a field that is not a custom field has no id to ask by, and the API rejects a name that arrives quoted
+    with (
+        patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
+        patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
+    ):
+        async with app.run_test() as pilot:
+            await open_editor(app, pilot, 'project = SB')
+            assert suggestions_mock.await_args.kwargs == {
+                'field_name': 'project',
+                'field_value': 'SB',
+            }
 
 
 @pytest.mark.asyncio
@@ -616,22 +698,31 @@ async def test_the_values_of_a_field_are_fetched_once_the_user_stops_typing(
             # THEN only the last prefix is queried
             assert suggestions_mock.await_count == 1
             assert suggestions_mock.await_args.kwargs == {
-                'field_name': 'Dev Engineers',
+                'field_name': 'cf[10343]',
                 'field_value': 'naga',
             }
 
 
 @pytest.mark.asyncio
-async def test_a_single_character_does_not_query_the_values_of_a_field(
+async def test_the_values_of_a_field_are_listed_before_anything_is_typed(
     app, reference_data_mock, suggestions_mock
 ):
+    # the Jira web UI lists every value of a field as soon as the field is in scope; the API answers with all of them
+    # when no partial value is passed to it
     with (
         patch.object(APIController, 'get_jql_autocomplete_data', new=reference_data_mock),
         patch.object(APIController, 'get_jql_autocomplete_suggestions', new=suggestions_mock),
     ):
         async with app.run_test() as pilot:
-            await open_editor(app, pilot, '"Dev Engineers" in (n')
-            suggestions_mock.assert_not_awaited()
+            _, _, autocomplete = await open_editor(app, pilot, '"Dev Engineers" in (')
+            assert dropdown_options(autocomplete) == [
+                'Naga Kiran K - nagakiran@juniper.net',
+                'Hegde, Nagaraja - hnagaraja@juniper.net',
+            ]
+            assert suggestions_mock.await_args.kwargs == {
+                'field_name': 'cf[10343]',
+                'field_value': '',
+            }
 
 
 @pytest.mark.asyncio

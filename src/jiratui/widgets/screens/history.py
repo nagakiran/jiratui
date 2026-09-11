@@ -145,6 +145,10 @@ class HistoryScreen(ModalScreen[str]):
         ),
     ]
     TITLE = 'Recent History'
+    AUTO_FOCUS = 'HistoryWorkItemsTable'
+    """The table is the only interactive widget of the screen. Focusing it means the arrow keys and `enter` work as
+    soon as the screen opens, and the key bindings of the table show up in the footer; otherwise the scrollable
+    container around it takes the focus and the user has to press `tab` first."""
 
     def __init__(self, manager: HistoryManager):
         super().__init__()

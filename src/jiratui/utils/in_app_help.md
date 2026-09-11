@@ -64,6 +64,9 @@ is loaded into the tabs on the right-hand side. Depending on the tab that is act
 | `^j`        | Search Results        | Copies the URL of the work item currently selected                         |
 | `^t`        | Search Results        | Copies the work item as `<key> - <summary>`                                |
 | `^e`        | JQL Query field       | Opens the JQL Query Editor                                                 |
+| `^e`        | JQL Query Editor      | Writes the expression with the editor set in `text_editor`                 |
+| `^s`        | JQL Query Editor      | Saves the expression under a name                                          |
+| `^d`        | JQL Query Editor      | Deletes the selected saved expression                                      |
 | `^n`        | JQL suggestions       | Highlights the next suggestion; only while the suggestions are showing     |
 | `^p`        | JQL suggestions       | Highlights the previous suggestion; only while the suggestions are showing |
 | `d`         | Search Results        | Deletes a work item                                                        |
@@ -196,6 +199,26 @@ field, and the values of a field, as you type. While the list of suggestions is 
 
 `^n` and `^p` only apply while the suggestions are showing; otherwise `^n` creates a work item and `^p` opens the
 command palette, as usual.
+
+The values of a field are listed as soon as the field is in scope, before you type anything; e.g. writing
+`"Dev Complete Reason" in (` lists every reason.
+
+**Key bindings of the JQL Editor**
+
+| Key      | Action                                                                        |
+|----------|-------------------------------------------------------------------------------|
+| `^e`     | Writes the expression with the editor set in `text_editor` (e.g. `nvim`)       |
+| `^s`     | Saves the expression under a name, to pick it from the dropdown next time      |
+| `^d`     | Deletes the selected saved expression                                          |
+| `escape` | Closes the editor and applies the expression                                   |
+
+**Saving an expression**
+
+`^s` asks for a name and keeps the expression in `saved_jql.yaml`, next to your config file. Saved expressions are
+offered by the dropdown of the JQL Editor alongside the ones of `pre_defined_jql_expressions`, marked with a `★`.
+Saving under a name that is already taken replaces that expression. Your config file is never rewritten, so the
+expressions you wrote there by hand — and their comments — are left as they are; only the ones marked with a `★` can
+be deleted with `^d`.
 
 **Examples**
 
@@ -448,15 +471,13 @@ items you can press `f7`.
 
 Doing so will open a modal screen that will display a list of items.
 
-In the new screen you can press `tab` to move around to different items. After highlighting an item from the tables you
-can do the following:
+The list is focused as soon as the screen opens, so you can move between the items with the arrow keys `up` and `down`,
+and press `enter` on an item to close the screen and load the item into the main view. After highlighting an item you
+can also do the following:
 
 - press `^o` to open the item in the browser.
 - press `^k` to copy the item's key to the clipboard.
 - press `^j` to copy the item's URL to the clipboard.
 - press `^t` to copy the item to the clipboard as `<key> - <summary>`.
-
-In addition to this, if you select an item from the tables by pressing `enter` on it JiraTUI will close the screen and
-fetch the details of the select item. This gives you a quick way to navigate through related items.
 
 Last, you can empty the list of recent items by pressing `d`.

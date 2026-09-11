@@ -1,8 +1,9 @@
+import os
 from pathlib import Path
 
 from xdg_base_dirs import xdg_config_home, xdg_state_home
 
-from jiratui.constants import LOG_FILE_FILE_NAME
+from jiratui.constants import LOG_FILE_FILE_NAME, SAVED_JQL_FILE_NAME
 
 
 def _jiratui_directory(root: Path) -> Path:
@@ -53,3 +54,19 @@ def get_log_file() -> Path:
         A `Path` of the logs file.
     """
     return get_logs_directory() / LOG_FILE_FILE_NAME
+
+
+def get_saved_jql_file() -> Path:
+    """Retrieves the path of the file that holds the JQL expressions saved from the app.
+
+    The expressions that the user saves are kept apart from the configuration file, which is written by hand: a file
+    that the app owns can be rewritten without losing the comments and the order of the keys of a file that it does
+    not.
+
+    Returns:
+        A `Path` of the file, next to the configuration file in use.
+    """
+
+    if jira_tui_config_file := os.getenv('JIRA_TUI_CONFIG_FILE'):
+        return Path(jira_tui_config_file).resolve().parent / SAVED_JQL_FILE_NAME
+    return get_config_directory() / SAVED_JQL_FILE_NAME
