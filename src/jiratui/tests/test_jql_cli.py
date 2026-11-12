@@ -81,7 +81,11 @@ def test_pick_leaves_a_list_open_at_the_end_of_the_query(cache):
 
 
 def test_search_fzf_lines_and_aliases(cache, handler):
-    handler.search_issues_by_jql.return_value = ([issue('SB-1', 'First  bug')], [])
+    handler.search_issues_by_jql.return_value = (
+        [issue('SB-1', 'First  bug')],
+        [],
+        'assignee = 5c01',
+    )
     result = CliRunner().invoke(jql_cli.cli, ['search', '-f', 'fzf', '--', 'assignee = "Jane Doe"'])
     assert result.exit_code == 0
     # the readable value is sent as the value it stands for
@@ -92,14 +96,18 @@ def test_search_fzf_lines_and_aliases(cache, handler):
 
 
 def test_search_errors_are_lines_of_the_fzf_list(cache, handler):
-    handler.search_issues_by_jql.return_value = ([], ["Field 'statuz' does not exist"])
+    handler.search_issues_by_jql.return_value = (
+        [],
+        ["Field 'statuz' does not exist"],
+        'statuz = x',
+    )
     result = CliRunner().invoke(jql_cli.cli, ['search', '-f', 'fzf', '--', 'statuz = x'])
     assert result.exit_code == 0
     assert result.output.startswith('\t') and "Field 'statuz' does not exist" in result.output
 
 
 def test_search_errors_fail_outside_fzf(cache, handler):
-    handler.search_issues_by_jql.return_value = ([], ['bad'])
+    handler.search_issues_by_jql.return_value = ([], ['bad'], 'statuz = x')
     result = CliRunner().invoke(jql_cli.cli, ['search', '-f', 'keys', '--', 'statuz = x'])
     assert result.exit_code == 1
 
@@ -129,3 +137,33 @@ def test_render_markdown_for_a_terminal_unescapes_and_formats(monkeypatch):
 def test_render_markdown_for_an_editor_stays_markdown():
     rendered = jql_cli._render_markdown('**Bold:**\\\nmnha\\_ge and a \\_b', plain=True)
     assert rendered == '**Bold:**  \nmnha_ge and a \\_b'
+
+
+def test_search_plain_words_fall_back_to_a_text_search(cache, handler):
+    handler.search_issues_by_jql.return_value = (
+        [issue('SB-2', 'Resync')],
+        [],
+        'text ~ "mnha resync"',
+    )
+    result = CliRunner().invoke(jql_cli.cli, ['search', '-f', 'fzf', '--', 'mnha resync'])
+    assert (
+        handler.search_issues_by_jql.call_args.kwargs['fallback_expression']
+        == 'text ~ "mnha resync"'
+    )
+    note, item = result.output.splitlines()
+    assert 'Not JQL; searching the text: text ~ "mnha resync"' in note and note.startswith('\t')
+    assert item.startswith('SB-2\t')
+
+
+@pytest.mark.parametrize(
+    'expression, expected',
+    [
+        pytest.param('ass', 'text ~ "ass"', id='a-word'),
+        pytest.param('say "hi"', 'text ~ "say \\"hi\\""', id='quotes-are-escaped'),
+        pytest.param('assignee = x', None, id='an-operator'),
+        pytest.param('status in (', None, id='a-list-operator'),
+        pytest.param('a and', None, id='a-keyword'),
+    ],
+)
+def test_text_search_expression(expression, expected):
+    assert jql_cli.text_search_expression(expression) == expected

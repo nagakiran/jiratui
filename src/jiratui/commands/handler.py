@@ -371,8 +371,12 @@ class CommandHandler:
         raise CLIException(response.error)
 
     def search_issues_by_jql(
-        self, expression: str, limit: int | None = None, fields: list[str] | None = None
-    ) -> tuple[list[JiraIssue], list[str]]:
+        self,
+        expression: str,
+        limit: int | None = None,
+        fields: list[str] | None = None,
+        fallback_expression: str | None = None,
+    ) -> tuple[list[JiraIssue], list[str], str]:
         """Searches work items with a JQL expression.
 
         Jira answers an invalid expression with no work items rather than with an error, so when nothing is found the
@@ -382,40 +386,53 @@ class CommandHandler:
             expression: the JQL expression.
             limit: retrieves items up to this limit.
             fields: the fields to retrieve for every work item.
+            fallback_expression: an expression to search with instead when `expression` is invalid; e.g. a full-text
+                search for plain words. Both searches run in the same event loop, which the HTTP client is bound to.
 
         Returns:
-            The work items found, and the errors of the expression; the latter is empty unless nothing was found
-            because the expression is invalid.
+            The work items found; the errors of the expression, empty unless nothing was found because it is invalid;
+            and the expression that the work items were found with.
 
         Raises:
             CLIException: if the search fails.
         """
 
-        async def run() -> tuple[list[JiraIssue], list[str]]:
+        search_fields = fields or [
+            'id',
+            'key',
+            'status',
+            'summary',
+            'created',
+            'updated',
+            'reporter',
+            'issuetype',
+            'assignee',
+            'priority',
+        ]
+
+        async def search(jql: str) -> tuple[list[JiraIssue], list[str]]:
             response = await self.api.search_issues(
-                jql_query=expression,
-                limit=limit,
-                fields=fields
-                or [
-                    'id',
-                    'key',
-                    'status',
-                    'summary',
-                    'created',
-                    'updated',
-                    'reporter',
-                    'issuetype',
-                    'assignee',
-                    'priority',
-                ],
+                jql_query=jql, limit=limit, fields=search_fields
             )
             if not response.success:
+                # a syntax error fails the search with a message buried in a generic one; the validation says it plainly
+                validation = await self.api.validate_jql(jql)
+                if validation.success and validation.result:
+                    return [], list(validation.result)
                 raise CLIException(response.error or 'Unable to search work items')
             issues = list(response.result.issues) if response.result else []
             if issues:
                 return issues, []
-            validation = await self.api.validate_jql(expression)
+            validation = await self.api.validate_jql(jql)
             return [], list(validation.result or []) if validation.success else []
+
+        async def run() -> tuple[list[JiraIssue], list[str], str]:
+            issues, errors = await search(expression)
+            if errors and fallback_expression:
+                fallback_issues, fallback_errors = await search(fallback_expression)
+                if not fallback_errors:
+                    return fallback_issues, [], fallback_expression
+            return issues, errors, expression
 
         return asyncio.run(run())
 

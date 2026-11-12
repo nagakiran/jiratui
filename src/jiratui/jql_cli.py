@@ -69,6 +69,9 @@ SHOW_FIELDS = [
 
 EMPTY_QUERY_HINT = 'Type a JQL expression. tab: complete  ctrl-r: saved queries  ctrl-s: save  ctrl-e: edit in $EDITOR'
 
+ISSUE_KEY_PATTERN = re.compile(r'[A-Za-z][A-Za-z0-9_]*-\d+')
+"""The shape of the key of a work item; e.g. `SB-123`."""
+
 _HANDLER: 'CommandHandler | None' = None
 
 
@@ -626,15 +629,39 @@ def _fzf_lines(issues: list['JiraIssue']) -> list[str]:
     return lines
 
 
-def _search(expression: str, limit: int) -> tuple[list['JiraIssue'], list[str]]:
-    """Searches work items; returns them, and the errors of the expression when it is invalid."""
+def _search(
+    expression: str, limit: int, fallback_expression: str | None = None
+) -> tuple[list['JiraIssue'], list[str], str]:
+    """Searches work items; returns them, the errors of the expression when it is invalid, and the expression used."""
 
     from jiratui.exceptions import CLIException
 
     try:
-        return _handler().search_issues_by_jql(expression, limit=limit, fields=SEARCH_FIELDS)
+        return _handler().search_issues_by_jql(
+            expression, limit=limit, fields=SEARCH_FIELDS, fallback_expression=fallback_expression
+        )
     except CLIException as e:
         raise click.ClickException(str(e)) from e
+
+
+def text_search_expression(expression: str) -> str | None:
+    """The full-text search for an expression made of plain words; `None` when the expression is meant as JQL.
+
+    An expression is meant as JQL as soon as it uses an operator (`=`, `in`, `~`, ...) or a keyword; plain words such
+    as `mnha resync` have neither.
+    """
+
+    from jiratui.utils.jql import JQLTokenKind, tokenize
+
+    words = ' '.join(expression.split())
+    if not words:
+        return None
+    if any(
+        token.kind in (JQLTokenKind.OPERATOR, JQLTokenKind.KEYWORD) for token in tokenize(words)
+    ):
+        return None
+    escaped = words.replace('\\', '\\\\').replace('"', '\\"')
+    return f'text ~ "{escaped}"'
 
 
 @cli.command('search')
@@ -650,9 +677,19 @@ def _search(expression: str, limit: int) -> tuple[list['JiraIssue'], list[str]]:
     help='fzf: key<TAB>coloured line<TAB>url<TAB>summary; tsv: key, type, status, assignee, updated, summary, url; '
     'json: a list of objects; keys: one key per line.',
 )
+@click.option(
+    '--text-fallback/--no-text-fallback',
+    default=True,
+    help='Search plain words as text when they are not valid JQL.',
+)
 @click.argument('expression', default='')
-def search_command(expression: str, saved_name: str | None, limit: int, output_format: str) -> None:
+def search_command(
+    expression: str, saved_name: str | None, limit: int, output_format: str, text_fallback: bool
+) -> None:
     """Searches the work items that match EXPRESSION, a JQL expression.
+
+    When EXPRESSION is not valid JQL and has no operator (i.e. it is plain words), the words are searched as text
+    (`text ~ "..."`), unless --no-text-fallback is given.
 
     Errors are printed as lines of the output with the fzf format, so that they show up in the list of fzf.
     """
@@ -675,7 +712,15 @@ def search_command(expression: str, saved_name: str | None, limit: int, output_f
         sys.exit(1)
 
     try:
-        issues, errors = _search(resolve_expression(expression), limit)
+        # plain words are not JQL; they are searched as text, the way the search box of Jira does
+        fallback = text_search_expression(expression) if text_fallback else None
+        issues, errors, used = _search(resolve_expression(expression), limit, fallback)
+        if fallback and used == fallback:
+            note = f'Not JQL; searching the text: {fallback}'
+            if output_format == 'fzf':
+                _echo(f'\t\x1b[2m{note}\x1b[0m\t')
+            else:
+                click.echo(note, err=True)
     except click.ClickException as e:
         report([e.message])
         return
@@ -829,7 +874,8 @@ def show_command(key: str, comments: int, plain: bool) -> None:
     """Prints a work item as text; meant for the preview window of fzf and for editors."""
 
     key = key.strip()
-    if not key:
+    if not ISSUE_KEY_PATTERN.fullmatch(key):
+        # e.g. a hint or an error line of the list of fzf, whose first field is not a key
         return
     controller = _controller()
     response = _run(controller.get_issue(issue_id_or_key=key, fields=SHOW_FIELDS))
@@ -870,6 +916,18 @@ def show_command(key: str, comments: int, plain: bool) -> None:
 
 
 def main() -> None:
+    import logging
+
+    from jiratui.constants import LOGGER_NAME
+
+    # the output of this command is read by fzf and editors, so the errors that the app logs must not leak onto the
+    # terminal: without a handler, Python prints them to stderr. JIRATUI_JQL_DEBUG=1 shows them.
+    logger = logging.getLogger(LOGGER_NAME)
+    if os.getenv('JIRATUI_JQL_DEBUG'):
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logger.addHandler(logging.NullHandler())
+        logger.propagate = False
     cli(prog_name='jiratui-jql')
 
 

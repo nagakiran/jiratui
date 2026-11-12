@@ -229,7 +229,7 @@ def _search_issues_with_jql(
     handler = CommandHandler()
     with console.status('Searching work items...'):
         try:
-            issues, errors = handler.search_issues_by_jql(
+            issues, errors, _ = handler.search_issues_by_jql(
                 resolve_expression(expression), limit=limit
             )
         except CLIException as e:
