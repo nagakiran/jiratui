@@ -5266,3 +5266,42 @@ async def test_get_jql_autocomplete_suggestions_with_api_error(
     # THEN
     assert response.success is False
     assert response.error == 'some error'
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'parse_jql_queries')
+async def test_validate_jql_returns_the_errors(
+    parse_jql_queries_mock: Mock, jira_api_controller: APIController
+):
+    # GIVEN
+    parse_jql_queries_mock.return_value = {
+        'queries': [{'query': 'statuz = Open', 'errors': ["Field 'statuz' does not exist"]}]
+    }
+    # WHEN
+    response = await jira_api_controller.validate_jql('statuz = Open')
+    # THEN
+    assert response.success is True
+    assert response.result == ["Field 'statuz' does not exist"]
+    parse_jql_queries_mock.assert_called_once_with(['statuz = Open'])
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'parse_jql_queries')
+async def test_validate_jql_of_a_valid_expression(
+    parse_jql_queries_mock: Mock, jira_api_controller: APIController
+):
+    parse_jql_queries_mock.return_value = {'queries': [{'query': 'project = SB', 'errors': None}]}
+    response = await jira_api_controller.validate_jql('project = SB')
+    assert response.success is True
+    assert response.result == []
+
+
+@pytest.mark.asyncio
+@patch.object(JiraAPI, 'parse_jql_queries')
+async def test_validate_jql_when_the_api_fails(
+    parse_jql_queries_mock: Mock, jira_api_controller: APIController
+):
+    parse_jql_queries_mock.side_effect = ValueError('boom')
+    response = await jira_api_controller.validate_jql('project = SB')
+    assert response.success is False
+    assert response.error == 'boom'

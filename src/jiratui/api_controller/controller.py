@@ -2993,6 +2993,40 @@ class APIController:
             )
         return refs
 
+    async def validate_jql(self, expression: str) -> APIControllerResponse:
+        """Validates a JQL expression.
+
+        The search endpoint answers an invalid expression with no work items at all, so a caller that found nothing
+        uses this to tell an invalid expression apart from one that simply matches nothing.
+
+        Args:
+            expression: the JQL expression to validate.
+
+        Returns:
+            An instance of `APIControllerResponse` whose `result` is the list of errors of the expression; empty when
+            the expression is valid. `success = False` when the expression could not be validated at all, e.g. on a
+            Jira instance that does not offer the endpoint.
+        """
+
+        try:
+            response: Any | None = await self.api.parse_jql_queries([expression])
+        except Exception as e:
+            exception_details: dict = self._extract_exception_details(e)
+            self.logger.error(
+                'Unable to validate the JQL expression',
+                extra={'expression': expression, **exception_details.get('extra', {})},
+            )
+            return APIControllerResponse(success=False, error=exception_details.get('message'))
+        if not response or not isinstance(response, dict):
+            return APIControllerResponse(
+                success=False, error='Invalid response from the JQL parse API'
+            )
+        errors: list[str] = []
+        for query in response.get('queries') or []:
+            if isinstance(query, dict):
+                errors.extend(str(error) for error in query.get('errors') or [])
+        return APIControllerResponse(result=errors)
+
     async def get_jql_autocomplete_data(self) -> APIControllerResponse:
         """Retrieves the reference data required to autocomplete JQL expressions.
 

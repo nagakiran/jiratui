@@ -12,6 +12,7 @@ from jiratui.exceptions import (
 from jiratui.models import (
     IssueComment,
     IssueTransition,
+    JiraIssue,
     JiraIssueSearchResponse,
     JiraUser,
     JiraUserGroup,
@@ -368,6 +369,55 @@ class CommandHandler:
         if response.success:
             return response.result
         raise CLIException(response.error)
+
+    def search_issues_by_jql(
+        self, expression: str, limit: int | None = None, fields: list[str] | None = None
+    ) -> tuple[list[JiraIssue], list[str]]:
+        """Searches work items with a JQL expression.
+
+        Jira answers an invalid expression with no work items rather than with an error, so when nothing is found the
+        expression is validated, to tell the user why.
+
+        Args:
+            expression: the JQL expression.
+            limit: retrieves items up to this limit.
+            fields: the fields to retrieve for every work item.
+
+        Returns:
+            The work items found, and the errors of the expression; the latter is empty unless nothing was found
+            because the expression is invalid.
+
+        Raises:
+            CLIException: if the search fails.
+        """
+
+        async def run() -> tuple[list[JiraIssue], list[str]]:
+            response = await self.api.search_issues(
+                jql_query=expression,
+                limit=limit,
+                fields=fields
+                or [
+                    'id',
+                    'key',
+                    'status',
+                    'summary',
+                    'created',
+                    'updated',
+                    'reporter',
+                    'issuetype',
+                    'assignee',
+                    'priority',
+                ],
+            )
+            if not response.success:
+                raise CLIException(response.error or 'Unable to search work items')
+            issues = list(response.result.issues) if response.result else []
+            if issues:
+                return issues, []
+            validation = await self.api.validate_jql(expression)
+            return [], list(validation.result or []) if validation.success else []
+
+        return asyncio.run(run())
 
     def get_issue(self, key: str, fields: list[str] | None = None) -> JiraIssueSearchResponse:
         """Retrieves the details of a work item.

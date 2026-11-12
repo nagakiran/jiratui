@@ -81,6 +81,7 @@ test = [
 
 [project.scripts]
 jiratui = "jiratui.cli:jiratuicli"
+jiratui-jql = "jiratui.jql_cli:main"
 
 [build-system]
 requires = ["uv_build>=0.9.2,<0.10.0"]

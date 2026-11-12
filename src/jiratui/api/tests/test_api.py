@@ -3912,3 +3912,19 @@ async def test_get_jql_autocomplete_data_is_available_in_every_api(
     await api.get_jql_autocomplete_data()
     # THEN
     assert str(route.calls.last.request.url) == expected_url
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_parse_jql_queries(jira_api: JiraAPI):
+    # GIVEN
+    payload = {'queries': [{'query': 'statuz = Open', 'errors': ["Field 'statuz' does not exist"]}]}
+    route = respx.post(get_url_pattern('jql/parse'))
+    route.mock(return_value=httpx.Response(200, json=payload))
+    # WHEN
+    response = await jira_api.parse_jql_queries(['statuz = Open'])
+    # THEN
+    assert response == payload
+    request = route.calls.last.request
+    assert request.url.params['validation'] == 'strict'
+    assert json.loads(request.content) == {'queries': ['statuz = Open']}

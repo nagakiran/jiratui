@@ -191,6 +191,62 @@ config file. That way you do not need to pass this argument when you start the a
 $ jiratui ui --jql-expression-id 1
 ```
 
+## Searching with JQL from the Command Line
+
+`jiratui issues search` accepts a JQL expression, or one of the expressions saved from the JQL editor of the app:
+
+```shell
+jiratui issues search --jql 'project = SB and resolution = Unresolved order by updated desc'
+jiratui issues search --saved 'My unresolved items' --format keys
+jiratui issues search -p SB --jql 'status = "In Progress"' --format tsv
+```
+
+When an expression matches nothing because it is invalid (e.g. a field that does not exist), the error reported by Jira is printed instead of an empty list.
+
+### `jiratui-jql`: Completion and Search for Other Tools
+
+`jiratui-jql` is a second, lightweight command meant to be called by other tools (fzf, a shell widget, an editor) many times per minute. It does not load the UI, and it caches the JQL fields and functions on disk for a day (`jiratui-jql refresh` fetches them again), so completing a field name takes a fraction of a second; only the values of a field are asked to Jira.
+
+| Command | What it does |
+|---|---|
+| `jiratui-jql complete [-c CURSOR] [-f lines\|fzf\|json] JQL` | Prints the suggestions at the cursor: fields, the operators of the field, its values, or `and`/`or`/`order by`. `json` includes the span to replace, for editors. |
+| `jiratui-jql apply [-c CURSOR] --choice TEXT JQL` | Applies a suggestion and prints the new expression. |
+| `jiratui-jql pick [-c CURSOR] [--shell] TEXT` | Picks a suggestion with fzf and applies it. With `--shell`, `TEXT` is a whole command line and the expression is the value of `--jql`/`-q` (or an argument of `jqls`); prints the new cursor and the new command line. |
+| `jiratui-jql search [-f fzf\|tsv\|json\|keys] [--saved NAME] JQL` | Searches work items. The `fzf` format prints errors as lines of the list. |
+| `jiratui-jql show KEY` | Prints a work item (for the preview window of fzf); `--plain` prints Markdown. |
+| `jiratui-jql saved`, `save`, `pick-saved` | Lists, saves and picks saved expressions; shared with the app. |
+| `jiratui-jql edit JQL` | Opens the expression in `$EDITOR`, one clause per line, as a `.jql` file. |
+| `jiratui-jql validate JQL` | Prints the errors of an expression. |
+
+A readable value picked from the suggestions (e.g. a user's name) is sent to Jira as the value it stands for (their account id), the same way the app does.
+
+For example, a live search where the query of fzf is the JQL expression, and `tab` completes it:
+
+```shell
+tmp=$(mktemp)
+fzf --ansi --disabled --delimiter '\t' --with-nth 2 --accept-nth 1 \
+    --bind 'start:reload:jiratui-jql search -f fzf -- {q}' \
+    --bind 'change:reload:sleep 0.4; jiratui-jql search -f fzf -- {q}' \
+    --bind "tab:execute(jiratui-jql pick -- {q} > $tmp || printf %s {q} > $tmp)+transform-query(cat $tmp)" \
+    --preview '[ -n {1} ] && jiratui-jql show -- {1}'
+```
+
+The picker of `tab` runs through `execute`, which hands it the terminal, and its result becomes the new query.
+
+And a zsh widget that completes the JQL under the cursor of the command line, bound to `^X^J`:
+
+```shell
+_jiratui_jql_pick() {
+  local out
+  out=$(jiratui-jql pick --shell --cursor $CURSOR -- "$BUFFER") && {
+    BUFFER=${out#*$'\n'}; CURSOR=${out%%$'\n'*}
+  }
+  zle reset-prompt
+}
+zle -N _jiratui_jql_pick
+bindkey '^X^J' _jiratui_jql_pick
+```
+
 ## Using the UI
 
 ### Navigation

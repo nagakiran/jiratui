@@ -28,6 +28,8 @@ from jiratui.commands.render import (
 from jiratui.config import ApplicationConfiguration
 from jiratui.exceptions import CLIException
 from jiratui.files import get_config_file
+from jiratui.models import JiraIssueSearchResponse
+from jiratui.utils.jql import split_order_by
 
 console = Console()
 
@@ -110,6 +112,27 @@ def config():
     type=click.DateTime(['%Y-%m-%d']),
     help='Searches issues created until this date (inclusive). Expects YYYY-MM-DD',
 )
+@click.option(
+    '--jql',
+    '-q',
+    type=str,
+    help='Searches work items with a JQL expression. Combined with --project-key when both are given.',
+)
+@click.option(
+    '--saved',
+    '-s',
+    'saved_name',
+    type=str,
+    help='Searches work items with a saved JQL expression, by its key or label (see `jiratui-jql saved`).',
+)
+@click.option(
+    '--format',
+    '-f',
+    'output_format',
+    type=click.Choice(['table', 'tsv', 'json', 'keys']),
+    default='table',
+    help='How to print the work items found with --jql or --saved.',
+)
 def search_issues(
     project_key: str,
     key: str | None = None,
@@ -117,11 +140,24 @@ def search_issues(
     limit: int | None = None,
     created_from: datetime | None = None,
     created_until: datetime | None = None,
+    jql: str | None = None,
+    saved_name: str | None = None,
+    output_format: str = 'table',
 ) -> None:
     """Search work items."""
+    if jql or saved_name:
+        _search_issues_with_jql(
+            jql=jql,
+            saved_name=saved_name,
+            project_key=project_key,
+            limit=limit,
+            output_format=output_format,
+        )
+        return
+
     if not project_key and not key:
         raise click.BadParameter(
-            'One of --project-key (-p) or --key (-k) must be provided',
+            'One of --project-key (-p), --key (-k), --jql (-q) or --saved (-s) must be provided',
         )
 
     handler = CommandHandler()
@@ -173,6 +209,59 @@ def search_issues(
         else:
             render = JiraIssueSearchRenderer()
             render.render(console, response)
+
+
+def _search_issues_with_jql(
+    jql: str | None,
+    saved_name: str | None,
+    project_key: str | None,
+    limit: int | None,
+    output_format: str,
+) -> None:
+    from jiratui.jql_cli import find_saved_expression, resolve_expression
+
+    expression = find_saved_expression(saved_name) if saved_name else (jql or '')
+    if project_key:
+        filters, order_by = split_order_by(expression)
+        expression = f'project = "{project_key}"' + (f' and ({filters})' if filters else '')
+        if order_by:
+            expression = f'{expression} {order_by}'
+    handler = CommandHandler()
+    with console.status('Searching work items...'):
+        try:
+            issues, errors = handler.search_issues_by_jql(
+                resolve_expression(expression), limit=limit
+            )
+        except CLIException as e:
+            console.print(str(e))
+            sys.exit(1)
+    if errors:
+        for error in errors:
+            console.print(f'[red]{error}[/red]')
+        sys.exit(1)
+    if output_format == 'table':
+        JiraIssueSearchRenderer().render(console, JiraIssueSearchResponse(issues=issues))
+        return
+    if output_format == 'keys':
+        for issue in issues:
+            click.echo(issue.key)
+        return
+    rows = [
+        {
+            'key': issue.key,
+            'type': issue.work_item_type_name,
+            'status': issue.status_name,
+            'assignee': issue.assignee_display_name,
+            'updated': issue.updated.strftime('%Y-%m-%d') if issue.updated else '',
+            'summary': ' '.join(issue.summary.split()),
+        }
+        for issue in issues
+    ]
+    if output_format == 'json':
+        click.echo(json.dumps(rows))
+        return
+    for row in rows:
+        click.echo('\t'.join(row.values()))
 
 
 @issues.command('metadata')

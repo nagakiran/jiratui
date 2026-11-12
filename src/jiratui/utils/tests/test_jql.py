@@ -427,3 +427,45 @@ def test_resolve_values_does_not_quote_a_resolved_value_twice():
 )
 def test_resolve_values_with_nothing_to_do(expression, aliases):
     assert resolve_values(expression, aliases) == expression
+
+
+@pytest.mark.parametrize(
+    'text_with_cursor, value',
+    [
+        pytest.param('status = In|', 'In', id='in-after-equals'),
+        pytest.param('status != Is|', 'Is', id='is-after-not-equals'),
+        pytest.param('labels in (Was|', 'Was', id='was-inside-a-list'),
+    ],
+)
+def test_context_a_word_operator_after_an_operator_is_a_value(text_with_cursor, value):
+    # only a field is followed by an operator; `In` here is the start of a value like `In Progress`
+    context = context_for(text_with_cursor)
+    assert context.context is JQLContext.VALUE
+    assert context.prefix == value
+
+
+@pytest.mark.parametrize(
+    'text_with_cursor',
+    [
+        pytest.param('project = SB an|', id='after-a-value'),
+        pytest.param('project = "S B" o|', id='after-a-quoted-value'),
+        pytest.param('status in (Open) an|', id='after-a-list'),
+        pytest.param('(a = b or c = d) an|', id='after-a-group'),
+    ],
+)
+def test_context_a_word_after_a_complete_clause_is_a_keyword(text_with_cursor):
+    context = context_for(text_with_cursor)
+    assert context.context is JQLContext.KEYWORD
+    assert 'and' in context.keywords and 'order by' in context.keywords
+
+
+@pytest.mark.parametrize(
+    'text_with_cursor',
+    [
+        pytest.param('status in (Open Clo|', id='inside-an-unclosed-list'),
+        pytest.param('status changed from Op|', id='changed-predicate'),
+        pytest.param('status was Open an|', id='was-predicate'),
+    ],
+)
+def test_context_a_word_after_a_value_stays_a_value(text_with_cursor):
+    assert context_for(text_with_cursor).context is JQLContext.VALUE

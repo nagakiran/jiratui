@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from xdg_base_dirs import xdg_config_home, xdg_state_home
+from xdg_base_dirs import xdg_cache_home, xdg_config_home, xdg_state_home
 
 from jiratui.constants import LOG_FILE_FILE_NAME, SAVED_JQL_FILE_NAME
 
@@ -36,6 +36,15 @@ def get_logs_directory() -> Path:
         A `Path` of the logs directory.
     """
     return _jiratui_directory(xdg_state_home())
+
+
+def get_cache_directory() -> Path:
+    """Retrieves the directory where the application keeps data that it can always fetch again.
+
+    Returns:
+        A `Path` of the cache directory.
+    """
+    return _jiratui_directory(xdg_cache_home())
 
 
 def get_config_file() -> Path:

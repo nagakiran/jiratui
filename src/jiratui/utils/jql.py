@@ -227,8 +227,14 @@ def tokenize(text: str) -> list[JQLToken]:
                 index += 1
                 continue
             # an operator is looked for before a keyword: `not` starts the operator `not in`, but it is also a
-            # keyword on its own
-            if not in_order_by and not expects_field:
+            # keyword on its own. Only a field is followed by an operator: in `status = In` the `In` is a value, the
+            # start of `In Progress`, and not the operator `in`
+            if (
+                not in_order_by
+                and not expects_field
+                and tokens
+                and tokens[-1].kind is JQLTokenKind.FIELD
+            ):
                 if taken := _is_word_operator_at(raw, index):
                     tokens.append(
                         JQLToken(
@@ -359,6 +365,14 @@ def context_at(text: str, cursor: int) -> JQLCursorContext:
             )
         if current.kind is JQLTokenKind.VALUE:
             scope_field, scope_operator = _scope_of_value(before)
+            if _is_keyword_after_clause(before, current):
+                return JQLCursorContext(
+                    context=JQLContext.KEYWORD,
+                    prefix=prefix,
+                    replace_start=replace_start,
+                    replace_end=replace_end,
+                    keywords=LOGICAL_KEYWORDS + ('order by',),
+                )
             return JQLCursorContext(
                 context=JQLContext.VALUE,
                 prefix=prefix,
@@ -381,6 +395,40 @@ def context_at(text: str, cursor: int) -> JQLCursorContext:
     # the cursor is not inside a token: the suggestion is inserted at the cursor
     before = _tokens_before(tokens, cursor)
     return _context_after(before, cursor)
+
+
+def _is_keyword_after_clause(before: list[JQLToken], current: JQLToken) -> bool:
+    """Whether a bare word that the tokenizer read as a value is in fact a keyword being typed.
+
+    A clause is complete once its value is written, so a bare word that follows the value is what joins the next
+    clause; e.g. the `an` of `project = SB an` is the start of `and`, not a second value of `project`. The values of a
+    list are separated by commas, and the predicates of `was`/`changed` (e.g. `changed from Open to Done`) are
+    sequences of words, so neither is affected.
+    """
+
+    if current.quoted or not before:
+        return False
+    if before[-1].kind is JQLTokenKind.PUNCTUATION and before[-1].text == ')':
+        # a list, or a group of clauses, has just been closed
+        return True
+    if before[-1].kind is not JQLTokenKind.VALUE:
+        return False
+    _, operator = _scope_of_value(before)
+    if operator and operator.lower().split()[0] in ('was', 'changed'):
+        return False
+    depth = 0
+    for token in reversed(before):
+        if token.kind is JQLTokenKind.PUNCTUATION:
+            if token.text == ')':
+                depth += 1
+            elif token.text == '(':
+                if depth == 0:
+                    # an unclosed list: a word after a value is a missing comma, not a keyword
+                    return False
+                depth -= 1
+        elif token.kind in (JQLTokenKind.OPERATOR, JQLTokenKind.KEYWORD):
+            break
+    return True
 
 
 def _last_field(tokens: list[JQLToken]) -> JQLToken | None:

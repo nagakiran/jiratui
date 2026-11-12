@@ -1502,6 +1502,30 @@ class JiraAPI:
             params=params,
         )
 
+    async def parse_jql_queries(self, queries: list[str], validation: str = 'strict') -> dict:
+        """Parses JQL queries and reports the errors that each of them contains.
+
+        The search endpoint answers an invalid query with an empty list of work items rather than with an error, so
+        this is how the caller finds out *why* a query matched nothing; e.g. a field that does not exist.
+
+        **See Also**:
+        - [api-rest-api-3-jql-parse-post](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-jql/#api-rest-api-3-jql-parse-post)
+
+        Args:
+            queries: the JQL queries to parse.
+            validation: how to validate the queries: `strict` (default), `warn` or `none`.
+
+        Returns:
+            A dictionary with a `queries` key holding one entry per query; each with the `query` and its `errors`.
+        """
+
+        return await self._client.make_request(  # type:ignore[return-value]
+            method=httpx.AsyncClient.post,
+            url='jql/parse',
+            params={'validation': validation},
+            data=json.dumps({'queries': queries}),
+        )
+
 
 class JiraAPIv2(JiraAPI):
     """Implements methods to connect to the REST API v2 exposed by the Jira Cloud Platform.
