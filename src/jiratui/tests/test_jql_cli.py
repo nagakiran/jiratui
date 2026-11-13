@@ -167,3 +167,45 @@ def test_search_plain_words_fall_back_to_a_text_search(cache, handler):
 )
 def test_text_search_expression(expression, expected):
     assert jql_cli.text_search_expression(expression) == expected
+
+
+def child(key: str, parent: str) -> JiraIssue:
+    item = issue(key, f'Child {key}')
+    item.parent_issue_key = parent
+    return item
+
+
+def test_tree_rows_put_children_under_their_parents():
+    # an epic and a story found by the expression, the story being a child of the epic; a subtask of the story and
+    # another story of the epic added as children
+    epic, story = issue('SB-1', 'Epic'), child('SB-2', 'SB-1')
+    other_story, subtask = child('SB-4', 'SB-1'), child('SB-3', 'SB-2')
+    ordered, depths, matched = jql_cli._tree_rows([epic, story], [subtask, other_story])
+    assert [i.key for i in ordered] == ['SB-1', 'SB-2', 'SB-3', 'SB-4']
+    assert depths == [0, 1, 2, 1]
+    assert matched == [True, True, False, False]
+
+
+def test_tree_rows_keep_a_found_child_of_an_unknown_parent_at_the_top():
+    ordered, depths, _ = jql_cli._tree_rows([child('SB-5', 'SB-99')], [])
+    assert ([i.key for i in ordered], depths) == (['SB-5'], [0])
+
+
+def test_search_tree_fzf_lines_have_the_depth(cache, handler):
+    handler.search_issue_tree.return_value = (
+        [issue('SB-1', 'Epic')],
+        [child('SB-2', 'SB-1')],
+        [],
+        'issuetype = Epic',
+    )
+    result = CliRunner().invoke(
+        jql_cli.cli, ['search', '-f', 'fzf', '--tree', '--', 'issuetype = Epic']
+    )
+    assert result.exit_code == 0
+    first, second = result.output.splitlines()
+    assert first.split('\t')[0] == 'SB-1' and first.split('\t')[4] == '0'
+    key, display, _url, _summary, depth = second.split('\t')
+    assert (key, depth) == ('SB-2', '1')
+    # the child that the expression did not find is dimmed, with the place of the branches before its summary
+    assert display.startswith('\x1b[2m') and '\x1fChild SB-2' in display
+    handler.search_issues_by_jql.assert_not_called()

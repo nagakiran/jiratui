@@ -597,8 +597,17 @@ def _truncate(text: str, width: int) -> str:
     return f'{text[: width - 1]}…'
 
 
-def _fzf_lines(issues: list['JiraIssue']) -> list[str]:
-    """One line per work item: the key, the line to display and the URL, separated by tabs."""
+def _fzf_lines(
+    issues: list['JiraIssue'],
+    depths: list[int] | None = None,
+    matched: list[bool] | None = None,
+) -> list[str]:
+    """One line per work item: the key, the line to display, the URL and the summary, separated by tabs.
+
+    With `depths` (the threaded view of `search --tree`), each line also has the depth of its work item as a 5th field
+    and \\x1f before the summary, where liveq draws the branches; the work items that the expression did not find
+    (`matched` false: the children added under them) are dimmed.
+    """
 
     rows = []
     for issue in issues:
@@ -617,16 +626,67 @@ def _fzf_lines(issues: list['JiraIssue']) -> list[str]:
     status_width = min(max((len(row[2]) for row in rows), default=0), 16)
     assignee_width = min(max((len(row[3]) for row in rows), default=0), 18)
     lines = []
-    for key, issue_type, status, assignee, updated, summary in rows:
-        display = (
-            f'\x1b[35m{key.ljust(key_width)}\x1b[0m '
-            f'\x1b[2m{_truncate(issue_type, type_width)}\x1b[0m '
-            f'\x1b[36m{_truncate(status, status_width)}\x1b[0m '
-            f'\x1b[33m{_truncate(assignee, assignee_width)}\x1b[0m '
-            f'\x1b[2m{updated}\x1b[0m {summary}'
-        )
-        lines.append(f'{key}\t{display}\t{_issue_url(key)}\t{summary}')
+    for i, (key, issue_type, status, assignee, updated, summary) in enumerate(rows):
+        tree = '\x1f' if depths is not None else ''
+        if matched is not None and not matched[i]:
+            display = (
+                f'\x1b[2m{key.ljust(key_width)} {_truncate(issue_type, type_width)} '
+                f'{_truncate(status, status_width)} {_truncate(assignee, assignee_width)} '
+                f'{updated} {tree}{summary}\x1b[0m'
+            )
+        else:
+            display = (
+                f'\x1b[35m{key.ljust(key_width)}\x1b[0m '
+                f'\x1b[2m{_truncate(issue_type, type_width)}\x1b[0m '
+                f'\x1b[36m{_truncate(status, status_width)}\x1b[0m '
+                f'\x1b[33m{_truncate(assignee, assignee_width)}\x1b[0m '
+                f'\x1b[2m{updated}\x1b[0m {tree}{summary}'
+            )
+        line = f'{key}\t{display}\t{_issue_url(key)}\t{summary}'
+        if depths is not None:
+            line += f'\t{depths[i]}'
+        lines.append(line)
     return lines
+
+
+def _tree_rows(
+    issues: list['JiraIssue'], children: list['JiraIssue']
+) -> tuple[list['JiraIssue'], list[int], list[bool]]:
+    """The work items found and their children as a tree, in display order: each one followed by its children (an
+    epic, its stories, their subtasks). A work item found whose parent was found too goes under it rather than at the
+    top. Returns the work items, their depths, and whether each was found by the expression.
+    """
+
+    found = {issue.key for issue in issues}
+    every = {issue.key: issue for issue in [*issues, *children]}
+    kids: dict[str, list['JiraIssue']] = {}
+    roots = []
+    for issue in [*issues, *children]:
+        parent = issue.parent_issue_key
+        if parent and parent in every and parent != issue.key:
+            kids.setdefault(parent, []).append(issue)
+        elif issue.key in found:
+            roots.append(issue)
+    ordered: list['JiraIssue'] = []
+    depths: list[int] = []
+    seen: set[str] = set()
+
+    def walk(issue: 'JiraIssue', depth: int) -> None:
+        if issue.key in seen:  # a cycle of parents, which Jira should not allow
+            return
+        seen.add(issue.key)
+        ordered.append(issue)
+        depths.append(depth)
+        for child in kids.get(issue.key, []):
+            walk(child, depth + 1)
+
+    for root in roots:
+        walk(root, 0)
+    # the found work items that only a cycle reaches
+    for issue in issues:
+        if issue.key not in seen:
+            walk(issue, 0)
+    return ordered, depths, [issue.key in found for issue in ordered]
 
 
 def _search(
@@ -638,6 +698,21 @@ def _search(
 
     try:
         return _handler().search_issues_by_jql(
+            expression, limit=limit, fields=SEARCH_FIELDS, fallback_expression=fallback_expression
+        )
+    except CLIException as e:
+        raise click.ClickException(str(e)) from e
+
+
+def _search_tree(
+    expression: str, limit: int, fallback_expression: str | None = None
+) -> tuple[list['JiraIssue'], list['JiraIssue'], list[str], str]:
+    """Like `_search`, with the children of the work items found (subtasks, the stories of an epic)."""
+
+    from jiratui.exceptions import CLIException
+
+    try:
+        return _handler().search_issue_tree(
             expression, limit=limit, fields=SEARCH_FIELDS, fallback_expression=fallback_expression
         )
     except CLIException as e:
@@ -682,9 +757,20 @@ def text_search_expression(expression: str) -> str | None:
     default=True,
     help='Search plain words as text when they are not valid JQL.',
 )
+@click.option(
+    '--tree',
+    is_flag=True,
+    help='With -f fzf: the work items as a tree, each followed by its children (the stories of an epic, the subtasks '
+    'of a story), also those the expression does not find (dimmed); a 5th field has the depth (see liveq).',
+)
 @click.argument('expression', default='')
 def search_command(
-    expression: str, saved_name: str | None, limit: int, output_format: str, text_fallback: bool
+    expression: str,
+    saved_name: str | None,
+    limit: int,
+    output_format: str,
+    text_fallback: bool,
+    tree: bool,
 ) -> None:
     """Searches the work items that match EXPRESSION, a JQL expression.
 
@@ -714,7 +800,14 @@ def search_command(
     try:
         # plain words are not JQL; they are searched as text, the way the search box of Jira does
         fallback = text_search_expression(expression) if text_fallback else None
-        issues, errors, used = _search(resolve_expression(expression), limit, fallback)
+        tree = tree and output_format == 'fzf'
+        children: list['JiraIssue'] = []
+        if tree:
+            issues, children, errors, used = _search_tree(
+                resolve_expression(expression), limit, fallback
+            )
+        else:
+            issues, errors, used = _search(resolve_expression(expression), limit, fallback)
         if fallback and used == fallback:
             note = f'Not JQL; searching the text: {fallback}'
             if output_format == 'fzf':
@@ -738,7 +831,12 @@ def search_command(
         return
 
     if output_format == 'fzf':
-        for line in _fzf_lines(issues):
+        if tree:
+            ordered, depths, matched = _tree_rows(issues, children)
+            lines = _fzf_lines(ordered, depths, matched)
+        else:
+            lines = _fzf_lines(issues)
+        for line in lines:
             _echo(line)
     elif output_format == 'keys':
         for issue in issues:

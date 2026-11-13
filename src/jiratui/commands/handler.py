@@ -26,6 +26,24 @@ USERS_GROUPS_PER_PAGE = 25
 COMMENTS_PER_PAGE = 10
 
 
+DEFAULT_SEARCH_FIELDS = [
+    'id',
+    'key',
+    'status',
+    'summary',
+    'created',
+    'updated',
+    'reporter',
+    'issuetype',
+    'assignee',
+    'priority',
+]
+"""The fields retrieved for every work item of a search, unless others are asked for."""
+
+CHILDREN_CHUNK = 10
+"""How many parents a search for children (`parent in (...)`) has; see `search_issue_tree`."""
+
+
 class CommandHandler:
     def __init__(self):
         CONFIGURATION.set(ApplicationConfiguration())  # type:ignore[call-arg]
@@ -397,42 +415,131 @@ class CommandHandler:
             CLIException: if the search fails.
         """
 
-        search_fields = fields or [
-            'id',
-            'key',
-            'status',
-            'summary',
-            'created',
-            'updated',
-            'reporter',
-            'issuetype',
-            'assignee',
-            'priority',
-        ]
-
-        async def search(jql: str) -> tuple[list[JiraIssue], list[str]]:
-            response = await self.api.search_issues(
-                jql_query=jql, limit=limit, fields=search_fields
-            )
-            if not response.success:
-                # a syntax error fails the search with a message buried in a generic one; the validation says it plainly
-                validation = await self.api.validate_jql(jql)
-                if validation.success and validation.result:
-                    return [], list(validation.result)
-                raise CLIException(response.error or 'Unable to search work items')
-            issues = list(response.result.issues) if response.result else []
-            if issues:
-                return issues, []
-            validation = await self.api.validate_jql(jql)
-            return [], list(validation.result or []) if validation.success else []
+        search_fields = fields or DEFAULT_SEARCH_FIELDS
 
         async def run() -> tuple[list[JiraIssue], list[str], str]:
-            issues, errors = await search(expression)
-            if errors and fallback_expression:
-                fallback_issues, fallback_errors = await search(fallback_expression)
-                if not fallback_errors:
-                    return fallback_issues, [], fallback_expression
-            return issues, errors, expression
+            return await self._search_with_fallback(
+                expression, limit, search_fields, fallback_expression
+            )
+
+        return asyncio.run(run())
+
+    async def _search_jql(
+        self, jql: str, limit: int | None, fields: list[str]
+    ) -> tuple[list[JiraIssue], list[str]]:
+        """Searches work items; returns them and the errors of the expression when it is invalid."""
+
+        response = await self.api.search_issues(jql_query=jql, limit=limit, fields=fields)
+        if not response.success:
+            # a syntax error fails the search with a message buried in a generic one; the validation says it plainly
+            validation = await self.api.validate_jql(jql)
+            if validation.success and validation.result:
+                return [], list(validation.result)
+            raise CLIException(response.error or 'Unable to search work items')
+        issues = list(response.result.issues) if response.result else []
+        if issues:
+            return issues, []
+        validation = await self.api.validate_jql(jql)
+        return [], list(validation.result or []) if validation.success else []
+
+    async def _search_pages(self, jql: str, fields: list[str], limit: int) -> list[JiraIssue]:
+        """Searches work items page after page, up to `limit`; nothing when the search fails (e.g. children of
+        work items that cannot have any)."""
+
+        issues: list[JiraIssue] = []
+        token: str | None = None
+        while len(issues) < limit:
+            response = await self.api.search_issues(
+                jql_query=jql,
+                limit=min(100, limit - len(issues)),
+                fields=fields,
+                next_page_token=token,
+            )
+            if not response.success or not response.result:
+                break
+            issues.extend(response.result.issues)
+            token = response.result.next_page_token
+            if response.result.is_last or not token or not response.result.issues:
+                break
+        return issues
+
+    async def _search_with_fallback(
+        self,
+        expression: str,
+        limit: int | None,
+        fields: list[str],
+        fallback_expression: str | None,
+    ) -> tuple[list[JiraIssue], list[str], str]:
+        issues, errors = await self._search_jql(expression, limit, fields)
+        if errors and fallback_expression:
+            fallback_issues, fallback_errors = await self._search_jql(
+                fallback_expression, limit, fields
+            )
+            if not fallback_errors:
+                return fallback_issues, [], fallback_expression
+        return issues, errors, expression
+
+    def search_issue_tree(
+        self,
+        expression: str,
+        limit: int | None = None,
+        fields: list[str] | None = None,
+        fallback_expression: str | None = None,
+        levels: int = 2,
+        children_limit: int = 300,
+    ) -> tuple[list[JiraIssue], list[JiraIssue], list[str], str]:
+        """Searches work items with a JQL expression, like `search_issues_by_jql`, and also retrieves their children
+        (the subtasks of a story, the stories of an epic: `parent in (...)`), down to `levels` levels.
+
+        Args:
+            expression: the JQL expression.
+            limit: retrieves items up to this limit.
+            fields: the fields to retrieve for every work item; `parent` is added.
+            fallback_expression: an expression to search with instead when `expression` is invalid.
+            levels: how many levels of children to retrieve (2: the stories of an epic and their subtasks).
+            children_limit: retrieves up to this many children of every 10 parents, per level.
+
+        Returns:
+            The work items found; their children (and grandchildren, ...) that were not found themselves, in rank
+            order; the errors of the expression; and the expression that the work items were found with. A failure to
+            retrieve the children leaves them out rather than failing the search.
+        """
+
+        search_fields = list(fields or DEFAULT_SEARCH_FIELDS)
+        if 'parent' not in search_fields:
+            search_fields.append('parent')
+
+        async def run() -> tuple[list[JiraIssue], list[JiraIssue], list[str], str]:
+            issues, errors, used = await self._search_with_fallback(
+                expression, limit, search_fields, fallback_expression
+            )
+            children: list[JiraIssue] = []
+            seen = {issue.key for issue in issues}
+            parents = [issue.key for issue in issues]
+            for _ in range(levels):
+                if not parents:
+                    break
+                # the parents in chunks searched at once, so that the many children of some parents do not take the
+                # place of the others' and the levels take one round trip each
+                chunks = [
+                    parents[i : i + CHILDREN_CHUNK] for i in range(0, len(parents), CHILDREN_CHUNK)
+                ]
+                results = await asyncio.gather(
+                    *(
+                        self._search_pages(
+                            f'parent in ({", ".join(chunk)}) ORDER BY Rank ASC',
+                            search_fields,
+                            children_limit,
+                        )
+                        for chunk in chunks
+                    )
+                )
+                found = [issue for chunk_issues in results for issue in chunk_issues]
+                # every child is looked for again at the next level, even one found by the search itself
+                parents = [issue.key for issue in found]
+                children.extend(issue for issue in found if issue.key not in seen)
+                seen.update(issue.key for issue in found)
+            return issues, children, errors, used
 
         return asyncio.run(run())
 
