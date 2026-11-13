@@ -209,3 +209,37 @@ def test_search_tree_fzf_lines_have_the_depth(cache, handler):
     # the child that the expression did not find is dimmed, with the place of the branches before its summary
     assert display.startswith('\x1b[2m') and '\x1fChild SB-2' in display
     handler.search_issues_by_jql.assert_not_called()
+
+
+def test_tree_rows_put_found_work_items_under_parents_that_were_not_found():
+    # two subtasks found, whose story (and its epic) the expression does not find, after a work item of its own
+    alone, first, second = issue('SB-9', 'Alone'), child('SB-11', 'SB-10'), child('SB-12', 'SB-10')
+    story, epic = child('SB-10', 'SB-1'), issue('SB-1', 'Epic')
+    ordered, depths, matched = jql_cli._tree_rows([alone, first, second], [story, epic])
+    assert [i.key for i in ordered] == ['SB-9', 'SB-1', 'SB-10', 'SB-11', 'SB-12']
+    assert depths == [0, 0, 1, 2, 2]
+    assert matched == [True, False, False, True, True]
+
+
+def test_search_says_when_the_limit_cut_the_results(cache, handler):
+    handler.search_issues_by_jql.return_value = ([issue('SB-1', 'A'), issue('SB-2', 'B')], [], 'x')
+    result = CliRunner().invoke(
+        jql_cli.cli, ['search', '-f', 'fzf', '-l', '2', '--', 'project = SB']
+    )
+    note = result.output.splitlines()[0]
+    assert note.startswith('\t') and 'The first 2 work items' in note
+
+
+@pytest.mark.parametrize(
+    'expression, expected',
+    [
+        ('labels = X order by updated desc', 'labels = X'),
+        ('labels = X ORDER BY Rank', 'labels = X'),
+        ('summary ~ "sort order by"', 'summary ~ "sort order by"'),
+        ('ORDER BY created', 'key IS NOT EMPTY'),
+    ],
+)
+def test_without_order_by(expression, expected):
+    from jiratui.commands.handler import _without_order_by
+
+    assert _without_order_by(expression) == expected

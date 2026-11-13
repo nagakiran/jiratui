@@ -1,5 +1,6 @@
 import asyncio
 from datetime import date
+import re
 from typing import Any
 
 from jiratui.api_controller.controller import APIController, APIControllerResponse
@@ -26,6 +27,15 @@ USERS_GROUPS_PER_PAGE = 25
 COMMENTS_PER_PAGE = 10
 
 
+_ORDER_BY = re.compile(r'(?:^|\s+)ORDER\s+BY\s+[^"\']*$', re.IGNORECASE)
+
+
+def _without_order_by(expression: str) -> str:
+    """The expression without its ORDER BY clause, so that it can be a condition of another (`(...) AND ...`)."""
+
+    return _ORDER_BY.sub('', expression).strip() or 'key IS NOT EMPTY'
+
+
 DEFAULT_SEARCH_FIELDS = [
     'id',
     'key',
@@ -42,6 +52,9 @@ DEFAULT_SEARCH_FIELDS = [
 
 CHILDREN_CHUNK = 10
 """How many parents a search for children (`parent in (...)`) has; see `search_issue_tree`."""
+
+PARENTS_CHUNK = 50
+"""How many keys a search for the parents of work items (`key in (...)`) has; see `search_issue_tree`."""
 
 
 class CommandHandler:
@@ -427,7 +440,10 @@ class CommandHandler:
     async def _search_jql(
         self, jql: str, limit: int | None, fields: list[str]
     ) -> tuple[list[JiraIssue], list[str]]:
-        """Searches work items; returns them and the errors of the expression when it is invalid."""
+        """Searches work items; returns them and the errors of the expression when it is invalid.
+
+        Jira answers with a page of work items at most (100), so the next pages are retrieved up to `limit`.
+        """
 
         response = await self.api.search_issues(jql_query=jql, limit=limit, fields=fields)
         if not response.success:
@@ -437,6 +453,23 @@ class CommandHandler:
                 return [], list(validation.result)
             raise CLIException(response.error or 'Unable to search work items')
         issues = list(response.result.issues) if response.result else []
+        result = response.result
+        while (
+            result
+            and result.issues
+            and result.next_page_token
+            and not result.is_last
+            and (limit is None or len(issues) < limit)
+        ):
+            response = await self.api.search_issues(
+                jql_query=jql,
+                limit=None if limit is None else limit - len(issues),
+                fields=fields,
+                next_page_token=result.next_page_token,
+            )
+            result = response.result if response.success else None
+            if result:
+                issues.extend(result.issues)
         if issues:
             return issues, []
         validation = await self.api.validate_jql(jql)
@@ -487,9 +520,13 @@ class CommandHandler:
         fallback_expression: str | None = None,
         levels: int = 2,
         children_limit: int = 300,
+        parent_levels: int = 2,
     ) -> tuple[list[JiraIssue], list[JiraIssue], list[str], str]:
-        """Searches work items with a JQL expression, like `search_issues_by_jql`, and also retrieves their children
-        (the subtasks of a story, the stories of an epic: `parent in (...)`), down to `levels` levels.
+        """Searches work items with a JQL expression, like `search_issues_by_jql`, and also retrieves the work items
+        around them: their children (the subtasks of a story, the stories of an epic: `parent in (...)`), down to
+        `levels` levels, and their parents that were not found, up to `parent_levels` levels (the story of a subtask
+        and its epic), so that a tree shows them under their parents. The other children of those parents are not
+        retrieved.
 
         Args:
             expression: the JQL expression.
@@ -498,11 +535,13 @@ class CommandHandler:
             fallback_expression: an expression to search with instead when `expression` is invalid.
             levels: how many levels of children to retrieve (2: the stories of an epic and their subtasks).
             children_limit: retrieves up to this many children of every 10 parents, per level.
+            parent_levels: how many levels of parents to retrieve.
 
         Returns:
-            The work items found; their children (and grandchildren, ...) that were not found themselves, in rank
-            order; the errors of the expression; and the expression that the work items were found with. A failure to
-            retrieve the children leaves them out rather than failing the search.
+            The work items found (with the parents that the expression finds too, beyond `limit`); the work items around
+            them that were not found themselves (their parents, then their
+            children and grandchildren in rank order); the errors of the expression; and the expression that the work
+            items were found with. A failure to retrieve the others leaves them out rather than failing the search.
         """
 
         search_fields = list(fields or DEFAULT_SEARCH_FIELDS)
@@ -515,6 +554,45 @@ class CommandHandler:
             )
             children: list[JiraIssue] = []
             seen = {issue.key for issue in issues}
+            # the parents that were not found, level by level up
+            missing = [issue.parent_issue_key for issue in issues if issue.parent_issue_key]
+            for _ in range(parent_levels):
+                missing = list(dict.fromkeys(key for key in missing if key not in seen))
+                if not missing:
+                    break
+                chunks = [
+                    missing[i : i + PARENTS_CHUNK] for i in range(0, len(missing), PARENTS_CHUNK)
+                ]
+                # the parents, and which of them the expression finds too (beyond the limit of the search)
+                condition = _without_order_by(used)
+                results = await asyncio.gather(
+                    *(
+                        self._search_pages(
+                            f'key in ({", ".join(chunk)})', search_fields, len(chunk)
+                        )
+                        for chunk in chunks
+                    ),
+                    *(
+                        self._search_pages(
+                            f'({condition}) AND key in ({", ".join(chunk)})',
+                            ['key'],
+                            len(chunk),
+                        )
+                        for chunk in chunks
+                    ),
+                )
+                found = [issue for chunk_issues in results[: len(chunks)] for issue in chunk_issues]
+                matching = {
+                    issue.key for chunk_issues in results[len(chunks) :] for issue in chunk_issues
+                }
+                issues.extend(
+                    issue for issue in found if issue.key not in seen and issue.key in matching
+                )
+                children.extend(
+                    issue for issue in found if issue.key not in seen and issue.key not in matching
+                )
+                seen.update(issue.key for issue in found)
+                missing = [issue.parent_issue_key for issue in found if issue.parent_issue_key]
             parents = [issue.key for issue in issues]
             for _ in range(levels):
                 if not parents:

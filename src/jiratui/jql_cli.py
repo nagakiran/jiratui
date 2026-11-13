@@ -650,23 +650,34 @@ def _fzf_lines(
 
 
 def _tree_rows(
-    issues: list['JiraIssue'], children: list['JiraIssue']
+    issues: list['JiraIssue'], others: list['JiraIssue']
 ) -> tuple[list['JiraIssue'], list[int], list[bool]]:
-    """The work items found and their children as a tree, in display order: each one followed by its children (an
-    epic, its stories, their subtasks). A work item found whose parent was found too goes under it rather than at the
-    top. Returns the work items, their depths, and whether each was found by the expression.
+    """The work items found and those around them (`others`: their parents and children) as a tree, in display order:
+    each one followed by its children (an epic, its stories, their subtasks). A work item goes under its parent when
+    the parent is there, found or not; the trees come in the order of the first work item found in each. Returns the
+    work items, their depths, and whether each was found by the expression.
     """
 
     found = {issue.key for issue in issues}
-    every = {issue.key: issue for issue in [*issues, *children]}
+    every = {issue.key: issue for issue in [*issues, *others]}
     kids: dict[str, list['JiraIssue']] = {}
-    roots = []
-    for issue in [*issues, *children]:
+    for issue in [*issues, *others]:
         parent = issue.parent_issue_key
         if parent and parent in every and parent != issue.key:
             kids.setdefault(parent, []).append(issue)
-        elif issue.key in found:
-            roots.append(issue)
+
+    def top(issue: 'JiraIssue') -> 'JiraIssue':
+        visited = {issue.key}
+        while issue.parent_issue_key in every and issue.parent_issue_key not in visited:
+            issue = every[issue.parent_issue_key]
+            visited.add(issue.key)
+        return issue
+
+    roots: list['JiraIssue'] = []
+    for issue in issues:
+        root = top(issue)
+        if root.key not in {r.key for r in roots}:
+            roots.append(root)
     ordered: list['JiraIssue'] = []
     depths: list[int] = []
     seen: set[str] = set()
@@ -831,6 +842,11 @@ def search_command(
         return
 
     if output_format == 'fzf':
+        if len(issues) >= limit:
+            # Jira does not say how many there are; at the limit, there are likely more
+            _echo(
+                f'\t\x1b[2mThe first {limit} work items; more may match: narrow the expression, or raise the limit\x1b[0m\t'
+            )
         if tree:
             ordered, depths, matched = _tree_rows(issues, children)
             lines = _fzf_lines(ordered, depths, matched)
